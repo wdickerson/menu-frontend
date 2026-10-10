@@ -1,0 +1,79 @@
+{
+  "restaurantName": "Twilight",
+  "tagline": "Twilight Rainier. Food. Yum.",
+  "sourceImages": [
+    "menu_images/twilight/twilight1.jpg",
+    "menu_images/twilight/twilight2.jpg"
+  ],
+  "notes": [
+    "Manual transcription from both provided Twilight menu photographs.",
+    "The kitchen is open until midnight, seven nights a week.",
+    "The Cobb Salad's 13/16 price and House Salad's 4.00/6.00 chicken additions are printed without labels. Their meanings have not been inferred.",
+    "Items are flat speech-ready text, preserving prices, descriptions, options, and section notes. Runtime menu parsing remains deferred."
+  ],
+  "sections": [
+    {
+      "name": "Appetizers & Finger Food",
+      "items": [
+        "Fried Mozzarella 13.00. Breaded fresh with house batter and served with marinara.",
+        "Chicken Strips Basket 13.75. Breaded with house batter and served with a side.",
+        "Buffalo Hot Wings 14.00. Tossed in house-made buffalo sauce with bleu cheese dressing.",
+        "A Basket of French Fries or Tater Tots 8.00.",
+        "Nachos 13. House-made tortilla chips, Tillamook cheddar, mozzarella and cotija cheese, onions, cherry tomatoes, jalapenos, topped with crema and salsa verde. Add marinated chicken 4.00."
+      ]
+    },
+    {
+      "name": "Salads",
+      "items": [
+        "House Made Caesar 10.00. Crisp romaine lettuce, parmesan, garlic and butter toasted panko, lemon, tossed with house-made Caesar dressing. Add chicken or house-made bacon 4.00.",
+        "Cobb Salad 13 or 16; price options are not labeled on the menu. A classic salad topped with grilled or fried chicken, a hard boiled egg, house-made bacon lardons, tomatoes, bleu cheese crumbles, served with house-made bleu cheese dressing.",
+        "House Salad 10.00. Mixed greens topped with cherry tomatoes, onions, cucumbers, parmesan and croutons. Served with your choice of dressing. Add grilled or fried chicken 4.00 or 6.00; addition prices are not labeled on the menu."
+      ]
+    },
+    {
+      "name": "House Made Sausages",
+      "items": [
+        "The CheddarWurst 11. A house-made CheddarWurst sausage served on a grilled brioche roll, spicy mustard on the side.",
+        "The Classic Scottie Dog 13.50. A house-made CheddarWurst served with grilled onions and charred jalapeno whipped cream cheese."
+      ]
+    },
+    {
+      "name": "Burgers",
+      "items": [
+        "Section note: All burgers are ground in house with 100 percent American Wagyu beef. Sandwiches are served a la carte. Substitute an Impossible meatless patty for 1.",
+        "The Classic Cheese Burger 15.00. Tillamook smoked sharp cheddar, lettuce, tomato, onions, pickles and Duke's aioli. Add thick cut house-made bacon 4.00.",
+        "The Seattle Burger 16.75. Thick sliced bacon, charred jalapeno whipped cream cheese, grilled onions, lettuce, tomato and Duke's aioli.",
+        "Grilled Onion Burger 15. Thin sliced grilled onions, thick sliced smoked provolone cheese, lettuce, tomato and Duke's aioli.",
+        "Blue Cheese Bacon Burger 16. Danish blue cheese crumbles, house-made bacon, lettuce, tomato, onions and Duke's aioli.",
+        "Mama Melt 16. Mama Lil's peppers, grilled onions, Danish blue cheese crumbles, Duke's aioli, lettuce, red onions, tomatoes, served on grilled thick sliced Macrina potato bread."
+      ]
+    },
+    {
+      "name": "Sandwiches",
+      "items": [
+        "Section note: All sandwiches are served a la carte.",
+        "Grilled Cheese Sandwich 10.00. Smoked sharp Tillamook cheddar, mozzarella, provolone and American cheese. Served on toasted thick cut Macrina potato bread.",
+        "The BLT 13.75. House-made thick cut apple smoked bacon, shredded romaine, tomatoes, Duke's aioli, served on toasted thick cut Macrina potato bread. Add avocado 2.00.",
+        "The Tejano Sandwich 14.00. House lime and chili marinated chopped chicken, grilled jalapeno, smoked provolone and cotija cheese. Served with lettuce, tomato and diced onions on a crispy roll.",
+        "Chicken Club 15.75. Grilled chicken breast with Tillamook cheddar, house-made bacon, aioli, tomato, lettuce, onion and avocado on Texas toast.",
+        "Buffalo Chicken Sandwich 15.00. Grilled chicken breast tossed in house-made buffalo sauce with lettuce, tomato, onion and bleu cheese dressing on a toasted bun.",
+        "Fried Chicken Sandwich 16.00. House breaded and fried chicken breast with lettuce, tomato, onion, pickles and aioli on a toasted bun."
+      ]
+    },
+    {
+      "name": "Sides & Sauces",
+      "items": [
+        "Add a side 4.00. French fries, tater tots or salad.",
+        "Sauces 0.75. Ranch, bleu cheese, honey mustard, barbecue or Duke's aioli."
+      ]
+    },
+    {
+      "name": "Menu Information",
+      "items": [
+        "Kitchen open until midnight, seven nights a week.",
+        "Food safety notice: Raw or undercooked food may pose a serious health risk.",
+        "Allergy notice: The restaurant states that allergies are taken seriously."
+      ]
+    }
+  ]
+}

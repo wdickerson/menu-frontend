@@ -1,0 +1,5 @@
+node_modules
+dist
+menu_images
+.DS_Store
+*.local

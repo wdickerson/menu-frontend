@@ -1,0 +1,677 @@
+import { useEffect, useRef, useState, type TouchEvent } from 'react';
+import { restaurantMenus, type RestaurantId, type RestaurantMenu } from './data/menus';
+import { useHoldToSelect } from './useHoldToSelect';
+
+type MenuSection = RestaurantMenu['sections'][number];
+type MenuItem = MenuSection['items'][number];
+type FingerCount = 1 | 2;
+type BrowserWindowWithWebkitAudio = Window & {
+  webkitAudioContext?: typeof AudioContext;
+};
+type NavigationTarget = 'section' | 'item';
+type BoundarySlots = Record<NavigationTarget, -1 | 1 | null>;
+type ReadSlots = Record<NavigationTarget, boolean>;
+type NavigationMode = 'swipe' | 'flick';
+type TouchGesture = {
+  fingerCount: FingerCount;
+  startedAt: number;
+  startX: number;
+  startY: number;
+  anchorX: number;
+  anchorY: number;
+  currentX: number;
+  currentY: number;
+  isTap: boolean;
+  hasStepped: boolean;
+  boundaryDirection: -1 | 1 | null;
+};
+type PendingTap = {
+  endedAt: number;
+  x: number;
+  y: number;
+  timerId: number;
+};
+
+const SPEECH_RATES = [1, 1.5, 2, 2.5, 3, 3.5] as const;
+type SpeechRate = (typeof SPEECH_RATES)[number];
+const RESTAURANT_STORAGE_KEY = 'menu-reader.restaurantId';
+const SPEECH_RATE_STORAGE_KEY = 'menu-reader.speechRate';
+const SWIPE_THRESHOLD = 70;
+const FLICK_THRESHOLD = 55;
+const TAP_MAX_MOVE = 18;
+const TAP_MAX_DURATION = 350;
+const DOUBLE_TAP_WINDOW = 350;
+const DOUBLE_TAP_MAX_DISTANCE = 40;
+
+function readSavedPreference(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    // Storage may be blocked by browser privacy settings.
+    return null;
+  }
+}
+
+function savePreference(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Keep the reader usable even when storage is blocked or full.
+  }
+}
+
+function getSavedRestaurantId(): RestaurantId {
+  const savedId = readSavedPreference(RESTAURANT_STORAGE_KEY);
+
+  return savedId !== null && Object.prototype.hasOwnProperty.call(restaurantMenus, savedId)
+    ? savedId as RestaurantId
+    : 'rough-and-tumble';
+}
+
+function getSavedSpeechRate(): SpeechRate {
+  const savedRate = Number(readSavedPreference(SPEECH_RATE_STORAGE_KEY));
+
+  return SPEECH_RATES.find((rate) => rate === savedRate) ?? 1.5;
+}
+
+function getNextIndex(currentIndex: number, direction: -1 | 1, itemCount: number) {
+  const nextIndex = currentIndex + direction;
+
+  if (nextIndex < 0 || nextIndex >= itemCount) {
+    return null;
+  }
+
+  return nextIndex;
+}
+
+function getSpeechText(item: MenuItem) {
+  return item;
+}
+
+function getNavigationMode(): NavigationMode {
+  const mode = new URLSearchParams(window.location.search).get('mode');
+
+  return mode === 'swipe' ? 'swipe' : 'flick';
+}
+
+function getTouchCenter(touches: TouchEvent<HTMLElement>['touches']) {
+  let x = 0;
+  let y = 0;
+
+  for (let index = 0; index < touches.length; index += 1) {
+    x += touches[index].clientX;
+    y += touches[index].clientY;
+  }
+
+  return {
+    x: x / touches.length,
+    y: y / touches.length,
+  };
+}
+
+function speak(text: string, rate: SpeechRate) {
+  if (!('speechSynthesis' in window)) {
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = rate;
+  window.speechSynthesis.speak(utterance);
+}
+
+function createAudioContext() {
+  const AudioContextConstructor =
+    window.AudioContext ?? (window as BrowserWindowWithWebkitAudio).webkitAudioContext;
+
+  if (!AudioContextConstructor) {
+    return null;
+  }
+
+  return new AudioContextConstructor();
+}
+
+type MenuReaderProps = {
+  menu: RestaurantMenu;
+  speechRate: SpeechRate;
+  onSpeechRateChange: (rate: SpeechRate) => void;
+  onSelectRestaurant: () => void;
+};
+
+function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }: MenuReaderProps) {
+  const navigationMode = getNavigationMode();
+  const [sectionIndex, setSectionIndex] = useState(0);
+  const [itemIndex, setItemIndex] = useState(0);
+  const { holdProgress, startHold, cancelHold } = useHoldToSelect(onSelectRestaurant);
+  const speechRateRef = useRef(speechRate);
+  const pendingTapRef = useRef<PendingTap | null>(null);
+  const adjustingSpeedRef = useRef(false);
+  const gestureRef = useRef<TouchGesture | null>(null);
+  const sectionIndexRef = useRef(sectionIndex);
+  const itemIndexRef = useRef(itemIndex);
+  const lastUtteranceRef = useRef(menu.sections[0].name);
+  const lastUtteranceTargetRef = useRef<NavigationTarget | null>('section');
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const boundarySlotsRef = useRef<BoundarySlots>({ section: null, item: null });
+  const readSlotsRef = useRef<ReadSlots>({ section: false, item: false });
+
+  useEffect(() => {
+    return () => {
+      if (pendingTapRef.current) {
+        window.clearTimeout(pendingTapRef.current.timerId);
+      }
+
+      void audioContextRef.current?.close();
+    };
+  }, []);
+
+  const section = menu.sections[sectionIndex];
+  const item = section.items[itemIndex];
+  const speechText = getSpeechText(item);
+
+  function playBoundaryThump() {
+    window.speechSynthesis?.cancel();
+
+    const audioContext = audioContextRef.current ?? createAudioContext();
+
+    if (!audioContext) {
+      return;
+    }
+
+    audioContextRef.current = audioContext;
+
+    if (audioContext.state === 'suspended') {
+      void audioContext.resume();
+    }
+
+    const startTime = audioContext.currentTime;
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(120, startTime);
+    oscillator.frequency.exponentialRampToValueAtTime(72, startTime + 0.16);
+
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.exponentialRampToValueAtTime(5.0, startTime + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.18);
+
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+    oscillator.start(startTime);
+    oscillator.stop(startTime + 0.2);
+  }
+
+  function speakMenuText(text: string, target: NavigationTarget) {
+    lastUtteranceRef.current = text;
+    lastUtteranceTargetRef.current = target;
+    readSlotsRef.current[target] = true;
+    speak(text, speechRateRef.current);
+  }
+
+  function chooseSection(direction: -1 | 1) {
+    const nextSectionIndex = getNextIndex(
+      sectionIndexRef.current,
+      direction,
+      menu.sections.length,
+    );
+
+    if (nextSectionIndex === null) {
+      return false;
+    }
+
+    const nextSection = menu.sections[nextSectionIndex];
+    const nextItemIndex = 0;
+
+    sectionIndexRef.current = nextSectionIndex;
+    itemIndexRef.current = nextItemIndex;
+    boundarySlotsRef.current.section = null;
+    boundarySlotsRef.current.item = null;
+    readSlotsRef.current.section = true;
+    readSlotsRef.current.item = false;
+    setSectionIndex(nextSectionIndex);
+    setItemIndex(nextItemIndex);
+    speakMenuText(nextSection.name, 'section');
+    return true;
+  }
+
+  function chooseItem(direction: -1 | 1) {
+    const currentSection = menu.sections[sectionIndexRef.current];
+    const nextItemIndex = getNextIndex(
+      itemIndexRef.current,
+      direction,
+      currentSection.items.length,
+    );
+
+    if (nextItemIndex === null) {
+      return false;
+    }
+
+    itemIndexRef.current = nextItemIndex;
+    boundarySlotsRef.current.item = null;
+    readSlotsRef.current.item = true;
+    setItemIndex(nextItemIndex);
+    speakMenuText(getSpeechText(currentSection.items[nextItemIndex]), 'item');
+    return true;
+  }
+
+  function readLastUtterance() {
+    const target = lastUtteranceTargetRef.current;
+
+    if (target !== null) {
+      readSlotsRef.current[target] = true;
+    }
+
+    speak(lastUtteranceRef.current, speechRateRef.current);
+  }
+
+  function readCurrentGestureTarget(target: NavigationTarget) {
+    if (target === 'section') {
+      speakMenuText(menu.sections[sectionIndexRef.current].name, 'section');
+      return;
+    }
+
+    const currentSection = menu.sections[sectionIndexRef.current];
+    speakMenuText(getSpeechText(currentSection.items[itemIndexRef.current]), 'item');
+  }
+
+  function clearPendingTap() {
+    if (pendingTapRef.current) {
+      window.clearTimeout(pendingTapRef.current.timerId);
+      pendingTapRef.current = null;
+    }
+  }
+
+  function endSpeedAdjustment() {
+    clearPendingTap();
+    adjustingSpeedRef.current = false;
+  }
+
+  function announceSpeed() {
+    if (adjustingSpeedRef.current) {
+      const nextIndex = (SPEECH_RATES.indexOf(speechRateRef.current) + 1) % SPEECH_RATES.length;
+      speechRateRef.current = SPEECH_RATES[nextIndex];
+      onSpeechRateChange(speechRateRef.current);
+    }
+
+    adjustingSpeedRef.current = true;
+    const text = `Speed ${speechRateRef.current}`;
+    lastUtteranceRef.current = text;
+    lastUtteranceTargetRef.current = null;
+    speak(text, speechRateRef.current);
+  }
+
+  function handleSingleFingerTap(gesture: TouchGesture) {
+    if (pendingTapRef.current) {
+      clearPendingTap();
+      announceSpeed();
+      return;
+    }
+
+    // Wait briefly so a double tap announces only the speed, not a menu entry first.
+    const timerId = window.setTimeout(() => {
+      pendingTapRef.current = null;
+      adjustingSpeedRef.current = false;
+
+      if (navigationMode === 'flick') {
+        readLastUtterance();
+      } else {
+        readCurrentGestureTarget('section');
+      }
+    }, DOUBLE_TAP_WINDOW);
+
+    pendingTapRef.current = {
+      endedAt: performance.now(),
+      x: gesture.currentX,
+      y: gesture.currentY,
+      timerId,
+    };
+  }
+
+  function moveGestureTarget(target: NavigationTarget, direction: -1 | 1) {
+    if (!readSlotsRef.current[target]) {
+      if (direction === -1) {
+        return false;
+      }
+
+      readCurrentGestureTarget(target);
+      return true;
+    }
+
+    return target === 'section'
+      ? chooseSection(direction)
+      : chooseItem(direction);
+  }
+
+  function navigateGestureTarget(
+    target: NavigationTarget,
+    direction: -1 | 1,
+    gesture?: TouchGesture,
+  ) {
+    const boundarySlot = boundarySlotsRef.current[target];
+
+    if (boundarySlot !== null) {
+      if (boundarySlot !== direction) {
+        readCurrentGestureTarget(target);
+        boundarySlotsRef.current[target] = null;
+
+        if (gesture) {
+          gesture.boundaryDirection = null;
+        }
+      } else if (!gesture || gesture.boundaryDirection !== direction) {
+        playBoundaryThump();
+
+        if (gesture) {
+          gesture.boundaryDirection = direction;
+        }
+      }
+
+      return;
+    }
+
+    if (gesture && gesture.boundaryDirection !== null && gesture.boundaryDirection !== direction) {
+      readCurrentGestureTarget(target);
+      gesture.boundaryDirection = null;
+      return;
+    }
+
+    const didMove = moveGestureTarget(target, direction);
+
+    if (didMove) {
+      if (gesture) {
+        gesture.boundaryDirection = null;
+      }
+    } else {
+      playBoundaryThump();
+      boundarySlotsRef.current[target] = direction;
+
+      if (gesture) {
+        gesture.boundaryDirection = direction;
+      }
+    }
+  }
+
+  function handleTouchStart(event: TouchEvent<HTMLElement>) {
+    cancelHold();
+    const fingerCount = event.touches.length;
+
+    if (fingerCount !== 1) {
+      endSpeedAdjustment();
+    }
+
+    if (fingerCount !== 1 && fingerCount !== 2) {
+      gestureRef.current = null;
+      return;
+    }
+
+    if (navigationMode === 'flick' && fingerCount !== 1) {
+      gestureRef.current = null;
+      return;
+    }
+
+    const point = getTouchCenter(event.touches);
+    const startedAt = performance.now();
+    const pendingTap = pendingTapRef.current;
+
+    if (fingerCount === 1 && pendingTap) {
+      const distance = Math.hypot(point.x - pendingTap.x, point.y - pendingTap.y);
+
+      if (startedAt - pendingTap.endedAt <= DOUBLE_TAP_WINDOW && distance <= DOUBLE_TAP_MAX_DISTANCE) {
+        // Let an eligible second tap finish before firing the single-tap action.
+        window.clearTimeout(pendingTap.timerId);
+      } else {
+        endSpeedAdjustment();
+      }
+    }
+
+    gestureRef.current = {
+      fingerCount,
+      startedAt,
+      startX: point.x,
+      startY: point.y,
+      anchorX: point.x,
+      anchorY: point.y,
+      currentX: point.x,
+      currentY: point.y,
+      isTap: true,
+      hasStepped: false,
+      boundaryDirection: null,
+    };
+
+    if (fingerCount === 1) {
+      startHold();
+    }
+  }
+
+  function handleTouchMove(event: TouchEvent<HTMLElement>) {
+    const gesture = gestureRef.current;
+
+    if (!gesture) {
+      return;
+    }
+
+    if (event.touches.length !== gesture.fingerCount) {
+      gesture.isTap = false;
+      cancelHold();
+      endSpeedAdjustment();
+
+      if (event.touches.length > 2) {
+        gestureRef.current = null;
+      }
+
+      return;
+    }
+
+    const point = getTouchCenter(event.touches);
+    gesture.currentX = point.x;
+    gesture.currentY = point.y;
+
+    if (Math.abs(point.x - gesture.startX) > TAP_MAX_MOVE || Math.abs(point.y - gesture.startY) > TAP_MAX_MOVE) {
+      gesture.isTap = false;
+      cancelHold();
+      endSpeedAdjustment();
+    }
+
+    if (navigationMode === 'flick') {
+      return;
+    }
+
+    const deltaX = point.x - gesture.anchorX;
+    const deltaY = point.y - gesture.anchorY;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+
+    if (absY < SWIPE_THRESHOLD || absY <= absX * 1.2) {
+      return;
+    }
+
+    const steps = Math.trunc(absY / SWIPE_THRESHOLD);
+    const physicalDirection = deltaY > 0 ? 1 : -1;
+    const direction = (physicalDirection * -1) as -1 | 1;
+
+    for (let step = 0; step < steps; step += 1) {
+      navigateGestureTarget(gesture.fingerCount === 1 ? 'section' : 'item', direction, gesture);
+    }
+
+    gesture.anchorX = point.x;
+    gesture.anchorY += steps * SWIPE_THRESHOLD * physicalDirection;
+    gesture.hasStepped = true;
+  }
+
+  function handleFlickEnd(deltaX: number, deltaY: number) {
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+
+    if (absY >= FLICK_THRESHOLD && absY > absX * 1.2) {
+      navigateGestureTarget('section', deltaY < 0 ? 1 : -1);
+      return;
+    }
+
+    if (absX >= FLICK_THRESHOLD && absX > absY * 1.2) {
+      navigateGestureTarget('item', deltaX < 0 ? 1 : -1);
+    }
+  }
+
+  function handleTouchEnd(event: TouchEvent<HTMLElement>) {
+    cancelHold();
+    const gesture = gestureRef.current;
+
+    if (!gesture) {
+      return;
+    }
+
+    if (event.touches.length > 0) {
+      return;
+    }
+
+    gestureRef.current = null;
+
+    if (gesture.fingerCount === 1 && event.changedTouches.length > 0) {
+      gesture.currentX = event.changedTouches[0].clientX;
+      gesture.currentY = event.changedTouches[0].clientY;
+    }
+
+    const deltaX = gesture.currentX - gesture.startX;
+    const deltaY = gesture.currentY - gesture.startY;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+    const isTap = gesture.isTap && !gesture.hasStepped
+      && absX <= TAP_MAX_MOVE && absY <= TAP_MAX_MOVE
+      && performance.now() - gesture.startedAt <= TAP_MAX_DURATION;
+
+    if (isTap && gesture.fingerCount === 1) {
+      handleSingleFingerTap(gesture);
+      return;
+    }
+
+    endSpeedAdjustment();
+
+    if (navigationMode === 'flick') {
+      handleFlickEnd(deltaX, deltaY);
+      return;
+    }
+
+    if (isTap && gesture.fingerCount === 2) {
+      readCurrentGestureTarget('item');
+    }
+  }
+
+  function handleTouchCancel() {
+    cancelHold();
+    gestureRef.current = null;
+    endSpeedAdjustment();
+  }
+
+  return (
+    <main
+      className="screen reader-screen"
+      aria-labelledby="app-title"
+      onContextMenu={(event) => event.preventDefault()}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
+    >
+      <section className="reader-panel" aria-label="Menu speech reader">
+        <p className="eyebrow">Version 10</p>
+        <h1 id="app-title">Menu Reader</h1>
+        <div className="restaurant-info">
+          <p className="restaurant">{menu.restaurantName}</p>
+          <p className="reading-speed">Speed: {speechRate}×</p>
+        </div>
+
+        <div className="menu-item" aria-live="polite">
+          <p className="section-label">
+            {section.name} {sectionIndex + 1} of {menu.sections.length}
+          </p>
+          <p className="item-text">{item}</p>
+        </div>
+
+        <p className="gesture-note">Item {itemIndex + 1} of {section.items.length}</p>
+        <span className="sr-only">{speechText}</span>
+      </section>
+      <progress
+        className="hold-progress"
+        aria-label="Hold for restaurant selection"
+        max={1}
+        value={holdProgress}
+      />
+    </main>
+  );
+}
+
+function RestaurantSelection({ onSelect }: { onSelect: (id: RestaurantId) => void }) {
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
+  const canSelectRef = useRef(false);
+
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
+
+  return (
+    <main
+      className="screen"
+      aria-labelledby="selection-title"
+      onPointerDown={() => { canSelectRef.current = true; }}
+      onTouchStart={() => { canSelectRef.current = true; }}
+      onClickCapture={(event) => {
+        // Releasing the opening hold must not select a button beneath that finger.
+        if (!canSelectRef.current && event.detail !== 0) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+    >
+      <section className="reader-panel selection-panel">
+        <p className="eyebrow">Version 10</p>
+        <h1 id="selection-title" ref={headingRef} tabIndex={-1}>Choose a restaurant</h1>
+        <p className="selection-note">Select a menu to return to the reader.</p>
+        <div className="restaurant-options">
+          {(Object.keys(restaurantMenus) as RestaurantId[]).map((id) => (
+            <button key={id} type="button" onClick={() => onSelect(id)}>
+              {restaurantMenus[id].restaurantName}
+            </button>
+          ))}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function App() {
+  const [restaurantId, setRestaurantId] = useState<RestaurantId>(getSavedRestaurantId);
+  const [isSelectingRestaurant, setIsSelectingRestaurant] = useState(false);
+  const [speechRate, setSpeechRate] = useState<SpeechRate>(getSavedSpeechRate);
+
+  useEffect(() => {
+    savePreference(RESTAURANT_STORAGE_KEY, restaurantId);
+  }, [restaurantId]);
+
+  useEffect(() => {
+    savePreference(SPEECH_RATE_STORAGE_KEY, String(speechRate));
+  }, [speechRate]);
+
+  if (isSelectingRestaurant) {
+    return (
+      <RestaurantSelection onSelect={(id) => {
+        setRestaurantId(id);
+        setIsSelectingRestaurant(false);
+      }} />
+    );
+  }
+
+  return (
+    <MenuReader
+      key={restaurantId}
+      menu={restaurantMenus[restaurantId]}
+      speechRate={speechRate}
+      onSpeechRateChange={setSpeechRate}
+      onSelectRestaurant={() => {
+        window.speechSynthesis?.cancel();
+        setIsSelectingRestaurant(true);
+      }}
+    />
+  );
+}
+
+export default App;
