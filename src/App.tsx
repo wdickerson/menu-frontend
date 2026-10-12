@@ -1,29 +1,25 @@
 import { useEffect, useRef, useState, type TouchEvent } from 'react';
-import { restaurantMenus, type RestaurantId, type RestaurantMenu } from './data/menus';
-import { useHoldToSelect } from './useHoldToSelect';
+import type { RestaurantMenu } from './data/menus';
+import CameraCapture from './CameraCapture';
+import { postMenuImages } from './menuApi';
+import { addRecentMenu, getMenuChoices, getSelectedMenu, loadMenuLibrary, saveMenuLibrary,
+  type MenuLibrary } from './menuLibrary';
 
 type MenuSection = RestaurantMenu['sections'][number];
 type MenuItem = MenuSection['items'][number];
-type FingerCount = 1 | 2;
 type BrowserWindowWithWebkitAudio = Window & {
   webkitAudioContext?: typeof AudioContext;
 };
 type NavigationTarget = 'section' | 'item';
 type BoundarySlots = Record<NavigationTarget, -1 | 1 | null>;
 type ReadSlots = Record<NavigationTarget, boolean>;
-type NavigationMode = 'swipe' | 'flick';
 type TouchGesture = {
-  fingerCount: FingerCount;
   startedAt: number;
   startX: number;
   startY: number;
-  anchorX: number;
-  anchorY: number;
   currentX: number;
   currentY: number;
   isTap: boolean;
-  hasStepped: boolean;
-  boundaryDirection: -1 | 1 | null;
 };
 type PendingTap = {
   endedAt: number;
@@ -34,9 +30,7 @@ type PendingTap = {
 
 const SPEECH_RATES = [1, 1.5, 2, 2.5, 3, 3.5] as const;
 type SpeechRate = (typeof SPEECH_RATES)[number];
-const RESTAURANT_STORAGE_KEY = 'menu-reader.restaurantId';
 const SPEECH_RATE_STORAGE_KEY = 'menu-reader.speechRate';
-const SWIPE_THRESHOLD = 70;
 const FLICK_THRESHOLD = 55;
 const TAP_MAX_MOVE = 18;
 const TAP_MAX_DURATION = 350;
@@ -60,14 +54,6 @@ function savePreference(key: string, value: string) {
   }
 }
 
-function getSavedRestaurantId(): RestaurantId {
-  const savedId = readSavedPreference(RESTAURANT_STORAGE_KEY);
-
-  return savedId !== null && Object.prototype.hasOwnProperty.call(restaurantMenus, savedId)
-    ? savedId as RestaurantId
-    : 'rough-and-tumble';
-}
-
 function getSavedSpeechRate(): SpeechRate {
   const savedRate = Number(readSavedPreference(SPEECH_RATE_STORAGE_KEY));
 
@@ -86,12 +72,6 @@ function getNextIndex(currentIndex: number, direction: -1 | 1, itemCount: number
 
 function getSpeechText(item: MenuItem) {
   return item;
-}
-
-function getNavigationMode(): NavigationMode {
-  const mode = new URLSearchParams(window.location.search).get('mode');
-
-  return mode === 'swipe' ? 'swipe' : 'flick';
 }
 
 function getTouchCenter(touches: TouchEvent<HTMLElement>['touches']) {
@@ -131,24 +111,21 @@ function createAudioContext() {
   return new AudioContextConstructor();
 }
 
-type MenuReaderProps = {
+type QuickNavProps = {
   menu: RestaurantMenu;
   speechRate: SpeechRate;
   onSpeechRateChange: (rate: SpeechRate) => void;
-  onSelectRestaurant: () => void;
+  onExit: () => void;
 };
 
-function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }: MenuReaderProps) {
-  const navigationMode = getNavigationMode();
-  const [sectionIndex, setSectionIndex] = useState(0);
-  const [itemIndex, setItemIndex] = useState(0);
-  const { holdProgress, startHold, cancelHold } = useHoldToSelect(onSelectRestaurant);
+function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProps) {
+  const gestureAreaRef = useRef<HTMLDivElement | null>(null);
   const speechRateRef = useRef(speechRate);
   const pendingTapRef = useRef<PendingTap | null>(null);
   const adjustingSpeedRef = useRef(false);
   const gestureRef = useRef<TouchGesture | null>(null);
-  const sectionIndexRef = useRef(sectionIndex);
-  const itemIndexRef = useRef(itemIndex);
+  const sectionIndexRef = useRef(0);
+  const itemIndexRef = useRef(0);
   const lastUtteranceRef = useRef(menu.sections[0].name);
   const lastUtteranceTargetRef = useRef<NavigationTarget | null>('section');
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -156,18 +133,20 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
   const readSlotsRef = useRef<ReadSlots>({ section: false, item: false });
 
   useEffect(() => {
+    gestureAreaRef.current?.focus();
+    const previousOverflow = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = 'hidden';
+
     return () => {
+      document.documentElement.style.overflow = previousOverflow;
       if (pendingTapRef.current) {
         window.clearTimeout(pendingTapRef.current.timerId);
       }
 
+      window.speechSynthesis?.cancel();
       void audioContextRef.current?.close();
     };
   }, []);
-
-  const section = menu.sections[sectionIndex];
-  const item = section.items[itemIndex];
-  const speechText = getSpeechText(item);
 
   function playBoundaryThump() {
     window.speechSynthesis?.cancel();
@@ -229,8 +208,6 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
     boundarySlotsRef.current.item = null;
     readSlotsRef.current.section = true;
     readSlotsRef.current.item = false;
-    setSectionIndex(nextSectionIndex);
-    setItemIndex(nextItemIndex);
     speakMenuText(nextSection.name, 'section');
     return true;
   }
@@ -250,7 +227,6 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
     itemIndexRef.current = nextItemIndex;
     boundarySlotsRef.current.item = null;
     readSlotsRef.current.item = true;
-    setItemIndex(nextItemIndex);
     speakMenuText(getSpeechText(currentSection.items[nextItemIndex]), 'item');
     return true;
   }
@@ -312,12 +288,7 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
     const timerId = window.setTimeout(() => {
       pendingTapRef.current = null;
       adjustingSpeedRef.current = false;
-
-      if (navigationMode === 'flick') {
-        readLastUtterance();
-      } else {
-        readCurrentGestureTarget('section');
-      }
+      readLastUtterance();
     }, DOUBLE_TAP_WINDOW);
 
     pendingTapRef.current = {
@@ -346,7 +317,6 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
   function navigateGestureTarget(
     target: NavigationTarget,
     direction: -1 | 1,
-    gesture?: TouchGesture,
   ) {
     const boundarySlot = boundarySlotsRef.current[target];
 
@@ -354,57 +324,25 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
       if (boundarySlot !== direction) {
         readCurrentGestureTarget(target);
         boundarySlotsRef.current[target] = null;
-
-        if (gesture) {
-          gesture.boundaryDirection = null;
-        }
-      } else if (!gesture || gesture.boundaryDirection !== direction) {
+      } else {
         playBoundaryThump();
-
-        if (gesture) {
-          gesture.boundaryDirection = direction;
-        }
       }
 
-      return;
-    }
-
-    if (gesture && gesture.boundaryDirection !== null && gesture.boundaryDirection !== direction) {
-      readCurrentGestureTarget(target);
-      gesture.boundaryDirection = null;
       return;
     }
 
     const didMove = moveGestureTarget(target, direction);
 
-    if (didMove) {
-      if (gesture) {
-        gesture.boundaryDirection = null;
-      }
-    } else {
+    if (!didMove) {
       playBoundaryThump();
       boundarySlotsRef.current[target] = direction;
-
-      if (gesture) {
-        gesture.boundaryDirection = direction;
-      }
     }
   }
 
   function handleTouchStart(event: TouchEvent<HTMLElement>) {
-    cancelHold();
-    const fingerCount = event.touches.length;
-
-    if (fingerCount !== 1) {
+    // Button touches must not repeat speech or change the reading speed.
+    if ((event.target as Element).closest('button') || event.touches.length !== 1) {
       endSpeedAdjustment();
-    }
-
-    if (fingerCount !== 1 && fingerCount !== 2) {
-      gestureRef.current = null;
-      return;
-    }
-
-    if (navigationMode === 'flick' && fingerCount !== 1) {
       gestureRef.current = null;
       return;
     }
@@ -413,7 +351,7 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
     const startedAt = performance.now();
     const pendingTap = pendingTapRef.current;
 
-    if (fingerCount === 1 && pendingTap) {
+    if (pendingTap) {
       const distance = Math.hypot(point.x - pendingTap.x, point.y - pendingTap.y);
 
       if (startedAt - pendingTap.endedAt <= DOUBLE_TAP_WINDOW && distance <= DOUBLE_TAP_MAX_DISTANCE) {
@@ -425,22 +363,13 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
     }
 
     gestureRef.current = {
-      fingerCount,
       startedAt,
       startX: point.x,
       startY: point.y,
-      anchorX: point.x,
-      anchorY: point.y,
       currentX: point.x,
       currentY: point.y,
       isTap: true,
-      hasStepped: false,
-      boundaryDirection: null,
     };
-
-    if (fingerCount === 1) {
-      startHold();
-    }
   }
 
   function handleTouchMove(event: TouchEvent<HTMLElement>) {
@@ -450,15 +379,9 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
       return;
     }
 
-    if (event.touches.length !== gesture.fingerCount) {
-      gesture.isTap = false;
-      cancelHold();
+    if (event.touches.length !== 1) {
+      gestureRef.current = null;
       endSpeedAdjustment();
-
-      if (event.touches.length > 2) {
-        gestureRef.current = null;
-      }
-
       return;
     }
 
@@ -468,34 +391,8 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
 
     if (Math.abs(point.x - gesture.startX) > TAP_MAX_MOVE || Math.abs(point.y - gesture.startY) > TAP_MAX_MOVE) {
       gesture.isTap = false;
-      cancelHold();
       endSpeedAdjustment();
     }
-
-    if (navigationMode === 'flick') {
-      return;
-    }
-
-    const deltaX = point.x - gesture.anchorX;
-    const deltaY = point.y - gesture.anchorY;
-    const absX = Math.abs(deltaX);
-    const absY = Math.abs(deltaY);
-
-    if (absY < SWIPE_THRESHOLD || absY <= absX * 1.2) {
-      return;
-    }
-
-    const steps = Math.trunc(absY / SWIPE_THRESHOLD);
-    const physicalDirection = deltaY > 0 ? 1 : -1;
-    const direction = (physicalDirection * -1) as -1 | 1;
-
-    for (let step = 0; step < steps; step += 1) {
-      navigateGestureTarget(gesture.fingerCount === 1 ? 'section' : 'item', direction, gesture);
-    }
-
-    gesture.anchorX = point.x;
-    gesture.anchorY += steps * SWIPE_THRESHOLD * physicalDirection;
-    gesture.hasStepped = true;
   }
 
   function handleFlickEnd(deltaX: number, deltaY: number) {
@@ -513,7 +410,6 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
   }
 
   function handleTouchEnd(event: TouchEvent<HTMLElement>) {
-    cancelHold();
     const gesture = gestureRef.current;
 
     if (!gesture) {
@@ -526,7 +422,7 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
 
     gestureRef.current = null;
 
-    if (gesture.fingerCount === 1 && event.changedTouches.length > 0) {
+    if (event.changedTouches.length > 0) {
       gesture.currentX = event.changedTouches[0].clientX;
       gesture.currentY = event.changedTouches[0].clientY;
     }
@@ -535,74 +431,139 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
     const deltaY = gesture.currentY - gesture.startY;
     const absX = Math.abs(deltaX);
     const absY = Math.abs(deltaY);
-    const isTap = gesture.isTap && !gesture.hasStepped
+    const isTap = gesture.isTap
       && absX <= TAP_MAX_MOVE && absY <= TAP_MAX_MOVE
       && performance.now() - gesture.startedAt <= TAP_MAX_DURATION;
 
-    if (isTap && gesture.fingerCount === 1) {
+    if (isTap) {
       handleSingleFingerTap(gesture);
       return;
     }
 
     endSpeedAdjustment();
-
-    if (navigationMode === 'flick') {
-      handleFlickEnd(deltaX, deltaY);
-      return;
-    }
-
-    if (isTap && gesture.fingerCount === 2) {
-      readCurrentGestureTarget('item');
-    }
+    handleFlickEnd(deltaX, deltaY);
   }
 
   function handleTouchCancel() {
-    cancelHold();
     gestureRef.current = null;
     endSpeedAdjustment();
   }
 
   return (
-    <main
-      className="screen reader-screen"
-      aria-labelledby="app-title"
-      onContextMenu={(event) => event.preventDefault()}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchCancel}
-    >
-      <section className="reader-panel" aria-label="Menu speech reader">
-        <p className="eyebrow">Version 10</p>
-        <h1 id="app-title">Menu Reader</h1>
-        <div className="restaurant-info">
-          <p className="restaurant">{menu.restaurantName}</p>
-          <p className="reading-speed">Speed: {speechRate}×</p>
-        </div>
-
-        <div className="menu-item" aria-live="polite">
-          <p className="section-label">
-            {section.name} {sectionIndex + 1} of {menu.sections.length}
-          </p>
-          <p className="item-text">{item}</p>
-        </div>
-
-        <p className="gesture-note">Item {itemIndex + 1} of {section.items.length}</p>
-        <span className="sr-only">{speechText}</span>
-      </section>
-      <progress
-        className="hold-progress"
-        aria-label="Hold for restaurant selection"
-        max={1}
-        value={holdProgress}
-      />
+    <main className="screen quick-nav-screen" aria-label="Quick Nav Mode">
+      <div
+        className="reader-panel gesture-area"
+        ref={gestureAreaRef}
+        role="region"
+        aria-label="Quick Nav gesture area"
+        aria-describedby="quick-nav-instructions"
+        tabIndex={-1}
+        onContextMenu={(event) => event.preventDefault()}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
+      >
+        <p id="quick-nav-instructions" className="quick-nav-instructions">
+          {`This is the Quick Nav page.
+Turn off screen readers to enable quick nav gestures.
+Flick up/down to navigate menu sections.
+Flick left/right to navigate items.
+Double tap to change reading speed.`}
+        </p>
+      </div>
+      <button className="menu-button exit-quick-nav" type="button" onClick={onExit}>
+        Exit Quick Nav Mode
+      </button>
     </main>
   );
 }
 
-function RestaurantSelection({ onSelect }: { onSelect: (id: RestaurantId) => void }) {
+type MenuPageProps = {
+  menu: RestaurantMenu;
+  onCaptureMenu: () => void;
+  onSelectRestaurant: () => void;
+  onEnterQuickNav: () => void;
+  focusTarget: 'capture' | 'load' | 'quick-nav' | null;
+  storageWarning: string;
+  processing: boolean;
+  processingError: string;
+  onRetryProcessing: () => void;
+  onCancelProcessing: () => void;
+  onDismissProcessingError: () => void;
+};
+
+function MenuPage({ menu, onCaptureMenu, onSelectRestaurant, onEnterQuickNav, focusTarget,
+  storageWarning, processing, processingError, onRetryProcessing, onCancelProcessing,
+  onDismissProcessingError }: MenuPageProps) {
+  const captureButtonRef = useRef<HTMLButtonElement | null>(null);
+  const loadButtonRef = useRef<HTMLButtonElement | null>(null);
+  const quickNavButtonRef = useRef<HTMLButtonElement | null>(null);
+  const processingHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const processingErrorRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (processing) {
+      processingHeadingRef.current?.focus();
+    } else if (processingError) {
+      processingErrorRef.current?.focus();
+    } else if (focusTarget === 'capture') {
+      captureButtonRef.current?.focus();
+    } else if (focusTarget === 'load') {
+      loadButtonRef.current?.focus();
+    } else if (focusTarget === 'quick-nav') {
+      quickNavButtonRef.current?.focus();
+    }
+  }, [focusTarget, processing, processingError]);
+
+  return (
+    <main className="screen menu-screen" aria-label={processing ? 'Menu processing' : `${menu.restaurantName} menu`}>
+      <div className="menu-content">
+        <button className="menu-button" type="button" ref={captureButtonRef} disabled={processing} onClick={onCaptureMenu}>
+          Capture a New Menu
+        </button>
+        <button className="menu-button" type="button" ref={loadButtonRef} disabled={processing} onClick={onSelectRestaurant}>
+          Reload a Recent Menu
+        </button>
+        <button className="menu-button" type="button" ref={quickNavButtonRef} disabled={processing} onClick={onEnterQuickNav}>
+          Enter Quick Nav Mode
+        </button>
+        {storageWarning && <p className="storage-warning" role="alert">{storageWarning}</p>}
+        {processing && <section className="processing-panel" aria-labelledby="processing-title">
+          <h2 id="processing-title" ref={processingHeadingRef} tabIndex={-1}>Processing your menu…</h2>
+          <div role="status">
+            <span className="processing-indicator" aria-hidden="true" />
+            <p>This may take 20 seconds or longer. Please keep this page open while your menu is being read.</p>
+          </div>
+          <button className="menu-button" type="button" onClick={onCancelProcessing}>Cancel processing</button>
+        </section>}
+        {processingError && <section className="processing-panel">
+          <div ref={processingErrorRef} role="alert" tabIndex={-1}><p>{processingError}</p></div>
+          <p>Your previous menu is still available. You can retry using the same photos or capture a new menu.</p>
+          <div className="processing-error-actions">
+            <button className="menu-button" type="button" onClick={onRetryProcessing}>Retry loading menu</button>
+            <button className="menu-button" type="button" onClick={onDismissProcessingError}>Dismiss</button>
+          </div>
+        </section>}
+        {!processing && menu.sections.map((section, sectionIndex) => (
+          <section className="menu-section" key={sectionIndex} aria-labelledby={`menu-section-${sectionIndex}`}>
+            <h2 id={`menu-section-${sectionIndex}`}>{section.name}</h2>
+            <ul>
+              {section.items.map((item, itemIndex) => <li key={itemIndex}>{item}</li>)}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </main>
+  );
+}
+
+function RestaurantSelection({ library, onSelect, onClose }: {
+  library: MenuLibrary;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}) {
   const headingRef = useRef<HTMLHeadingElement | null>(null);
-  const canSelectRef = useRef(false);
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -612,26 +573,21 @@ function RestaurantSelection({ onSelect }: { onSelect: (id: RestaurantId) => voi
     <main
       className="screen"
       aria-labelledby="selection-title"
-      onPointerDown={() => { canSelectRef.current = true; }}
-      onTouchStart={() => { canSelectRef.current = true; }}
-      onClickCapture={(event) => {
-        // Releasing the opening hold must not select a button beneath that finger.
-        if (!canSelectRef.current && event.detail !== 0) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      }}
     >
       <section className="reader-panel selection-panel">
-        <p className="eyebrow">Version 10</p>
-        <h1 id="selection-title" ref={headingRef} tabIndex={-1}>Choose a restaurant</h1>
-        <p className="selection-note">Select a menu to return to the reader.</p>
+        <p className="eyebrow">Version 15</p>
+        <h1 id="selection-title" ref={headingRef} tabIndex={-1}>Reload a Recent Menu</h1>
+        <p className="selection-note">Choose a saved menu or one of the example menus.</p>
         <div className="restaurant-options">
-          {(Object.keys(restaurantMenus) as RestaurantId[]).map((id) => (
+          {getMenuChoices(library).map(({ id, menu, capturedAt }) => (
             <button key={id} type="button" onClick={() => onSelect(id)}>
-              {restaurantMenus[id].restaurantName}
+              {menu.restaurantName}
+              {capturedAt && <span className="recent-date">
+                Captured {new Date(capturedAt).toLocaleString()}
+              </span>}
             </button>
           ))}
+          <button type="button" onClick={onClose}>Cancel</button>
         </div>
       </section>
     </main>
@@ -639,36 +595,144 @@ function RestaurantSelection({ onSelect }: { onSelect: (id: RestaurantId) => voi
 }
 
 function App() {
-  const [restaurantId, setRestaurantId] = useState<RestaurantId>(getSavedRestaurantId);
-  const [isSelectingRestaurant, setIsSelectingRestaurant] = useState(false);
+  const [library, setLibrary] = useState<MenuLibrary>(loadMenuLibrary);
+  const [screen, setScreen] = useState<'menu' | 'selection' | 'quick-nav' | 'capture'>('menu');
+  const [focusTarget, setFocusTarget] = useState<MenuPageProps['focusTarget']>(null);
   const [speechRate, setSpeechRate] = useState<SpeechRate>(getSavedSpeechRate);
+  const [storageWarning, setStorageWarning] = useState('');
+  const [processing, setProcessing] = useState(false);
+  const [processingError, setProcessingError] = useState('');
+  const pendingImagesRef = useRef<Blob[]>([]);
+  const uploadRef = useRef<{ controller: AbortController; timeout: number } | null>(null);
+
+  useEffect(() => () => {
+    const upload = uploadRef.current;
+    uploadRef.current = null;
+    if (upload) {
+      window.clearTimeout(upload.timeout);
+      upload.controller.abort();
+    }
+  }, []);
+
+  async function processMenu(images: Blob[]) {
+    if (uploadRef.current || !images.length) return;
+    pendingImagesRef.current = images;
+    setScreen('menu');
+    setFocusTarget(null);
+    setProcessingError('');
+    setProcessing(true);
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, 35_000);
+    uploadRef.current = { controller, timeout };
+    try {
+      const menu = await postMenuImages(images, controller.signal);
+      if (uploadRef.current?.controller !== controller || controller.signal.aborted) return;
+      setLibrary((current) => addRecentMenu(current, menu));
+      pendingImagesRef.current = [];
+      setFocusTarget('load');
+    } catch (error) {
+      if (uploadRef.current?.controller === controller) {
+        setProcessingError(timedOut ? 'Reading the menu took too long. Try again or capture fewer images.'
+          : error instanceof TypeError ? 'Could not reach the menu service. Check your connection and try again.'
+            : error instanceof Error ? error.message : 'The menu could not be loaded. Try again.');
+      }
+    } finally {
+      window.clearTimeout(timeout);
+      if (uploadRef.current?.controller === controller) {
+        uploadRef.current = null;
+        setProcessing(false);
+      }
+    }
+  }
+
+  function cancelProcessing() {
+    const upload = uploadRef.current;
+    uploadRef.current = null;
+    if (upload) {
+      window.clearTimeout(upload.timeout);
+      upload.controller.abort();
+    }
+    pendingImagesRef.current = [];
+    setProcessing(false);
+    setProcessingError('');
+    setFocusTarget('capture');
+  }
+
+  function dismissProcessingError() {
+    pendingImagesRef.current = [];
+    setProcessingError('');
+    setFocusTarget('capture');
+  }
 
   useEffect(() => {
-    savePreference(RESTAURANT_STORAGE_KEY, restaurantId);
-  }, [restaurantId]);
+    const saved = saveMenuLibrary(library);
+    setStorageWarning(saved ? '' : 'This menu is available for this session, but could not be saved on this device. '
+      + 'Allow browser storage or free up space to keep it after a reload.');
+  }, [library]);
 
   useEffect(() => {
     savePreference(SPEECH_RATE_STORAGE_KEY, String(speechRate));
   }, [speechRate]);
 
-  if (isSelectingRestaurant) {
+  if (screen === 'capture') {
+    return <CameraCapture
+      onClose={() => {
+        setFocusTarget('capture');
+        setScreen('menu');
+      }}
+      onSubmit={(images) => void processMenu(images)}
+    />;
+  }
+
+  if (screen === 'selection') {
     return (
-      <RestaurantSelection onSelect={(id) => {
-        setRestaurantId(id);
-        setIsSelectingRestaurant(false);
+      <RestaurantSelection library={library} onSelect={(id) => {
+        setLibrary((current) => ({ ...current, selectedId: id }));
+        setFocusTarget('load');
+        setScreen('menu');
+      }} onClose={() => {
+        setFocusTarget('load');
+        setScreen('menu');
       }} />
     );
   }
 
+  if (screen === 'quick-nav') {
+    return (
+      <QuickNav
+        menu={getSelectedMenu(library)}
+        speechRate={speechRate}
+        onSpeechRateChange={setSpeechRate}
+        onExit={() => {
+          setFocusTarget('quick-nav');
+          setScreen('menu');
+        }}
+      />
+    );
+  }
+
   return (
-    <MenuReader
-      key={restaurantId}
-      menu={restaurantMenus[restaurantId]}
-      speechRate={speechRate}
-      onSpeechRateChange={setSpeechRate}
+    <MenuPage
+      menu={getSelectedMenu(library)}
+      focusTarget={focusTarget}
+      storageWarning={storageWarning}
+      processing={processing}
+      processingError={processingError}
+      onRetryProcessing={() => void processMenu(pendingImagesRef.current)}
+      onCancelProcessing={cancelProcessing}
+      onDismissProcessingError={dismissProcessingError}
+      onCaptureMenu={() => {
+        dismissProcessingError();
+        setScreen('capture');
+      }}
+      onEnterQuickNav={() => {
+        dismissProcessingError();
+        setScreen('quick-nav');
+      }}
       onSelectRestaurant={() => {
-        window.speechSynthesis?.cancel();
-        setIsSelectingRestaurant(true);
+        dismissProcessingError();
+        setScreen('selection');
       }}
     />
   );

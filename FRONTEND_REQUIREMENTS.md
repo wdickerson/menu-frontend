@@ -108,3 +108,61 @@ I have added images of Twilight's menu. You will need to examine the images and 
 
 Use the browser's localStorage to maintain the current restaurant selection and speech rate even on a page reload
 
+# Version 11
+
+Remove the "scroll" mode altogether. Remove all notions of "mode". We are proceeding with only "flick" control.
+
+Remove the "hold for select" logic. Instead, add a full-width button at the top of the main page labeled "Load Menu". This button should open the menu selection page.
+
+# Version 12
+
+This version makes the app more accessible for users who use screen readers.
+
+Below the "Load Menu" button, add a "Enter Quick Nav Mode" button.
+
+Below the "Enter Quick Nav Mode" button, if a menu is loaded, display it in a simple format that is navigable by screen readers. It should mirror the simple Section -> List Item structure that we have been using. On this main page, the flick gestures do no function. Scrolling is now allowed on this page. Remove all other content on this page that is not specified (ie, the page title, section/item numbers)
+
+When the "Enter Quick Nav Mode" button is clicked, enter a new screen. This screen is now where the flick gestures are handled. The top portion of the screen is a div for handling the flick gestures. On the bottom of the screen, a full-width button says "Exit Quick Nav Mode".
+
+## Version 13
+
+Do not show the restaurant name or menu item on the Quick Nav screen. Instead, have the div that handles the flick gestures show static text describing how to use the flick gestures:
+
+"This is the Quick Nav page. 
+Turn off screen readers to enable quick nav gestures.
+Flick up/down to navigate menu sections.
+Flick left/right to navigate items.
+Double tap to change reading speed."
+
+## Version 14
+
+Rename the "Load Menu" button to "Reload a Recent Menu".
+
+Above the "Reload a Recent Menu" button, add a "Capture a New Menu" button.
+
+When the user clicks "Capture a New Menu", a new page opens that is dedicated to capturing one or more images of a menu and POSTing them to the API. Here is the user experience:
+
+Tapping "Capture a New Menu" immediately opens a full-screen camera view. Two buttons are present at the bottom of the screen "Capture an image" and "Load this menu"
+
+"Capture an image" captures a single image, and a small preview of that image appears with a little "x" (remove) button at the top right.
+
+"Load this menu" posts the captured images to the API.
+
+A smaller "close" button at the top right closes the camera view without posting.
+
+Pinch-to-zoom works on the camera view screen page.
+
+getUserMedia() is used so as to implement a custom UI for the camera view page.
+
+When the POST returns, the menu in the response is loaded into the app. This menu is saved to localStorage and can be re-loaded via the "Reload a Recent Menu" page. The two hardcoded are still on that page for now, as well. 
+
+For now, the API endpoint can be hardocded into the frontend code: https://we8asbpr8l.execute-api.us-east-1.amazonaws.com/prod/menus
+
+Ensure images that are posted do not exceen 250kb each
+
+## Version 15
+
+Add a flashlight toggle to the top left of the image capture screen. Since we don't have native flash via getUserMedia, this will have to do.
+
+Once a user taps "Load this Menu", return to the main screen and display a loading screen while the menu is processing. The API call may take 20+ seconds, so it is important to let the user know that things are processing.
+

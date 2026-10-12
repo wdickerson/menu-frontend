@@ -23,14 +23,8 @@ html,
 body,
 #root {
   width: 100%;
-  height: 100%;
   min-height: 100dvh;
   margin: 0;
-  overflow: hidden;
-}
-
-body {
-  touch-action: none;
 }
 
 .screen {
@@ -46,7 +40,7 @@ body {
 
 .reader-panel {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(100%, 34rem);
   height: calc(100dvh - clamp(2rem, 8vw, 4rem));
   max-height: 48rem;
@@ -58,9 +52,7 @@ body {
   box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.42);
 }
 
-.eyebrow,
-.section-label,
-.gesture-note {
+.eyebrow {
   margin: 0;
   color: var(--muted);
   font-size: 0.875rem;
@@ -83,84 +75,91 @@ h1 {
   letter-spacing: 0;
 }
 
-.restaurant-info {
-  margin: 1.2rem 0 0;
-}
-
-.restaurant {
-  margin: 0;
-  color: var(--accent-strong);
-  font-size: clamp(1.3rem, 7vw, 2.1rem);
-  font-weight: 700;
-}
-
-.reading-speed {
-  margin: 0.35rem 0 0;
-  color: var(--muted);
-  font-size: 0.875rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.menu-item {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  height: clamp(7.5rem, 35dvh, 16rem);
+.quick-nav-screen {
+  position: fixed;
+  inset: 0;
+  height: 100dvh;
   min-height: 0;
-  margin: clamp(1.4rem, 5vh, 2.5rem) 0 clamp(1rem, 4vh, 2rem);
-  padding-top: clamp(1.25rem, 5vw, 2rem);
-  border-top: 1px solid var(--line);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 1rem;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
-.item-text {
+.gesture-area {
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
-  margin: 0.9rem 0 0;
-  padding: 1rem;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--muted);
-  font-size: clamp(1rem, 4.5vw, 1.25rem);
-  line-height: 1.45;
-}
-
-.gesture-note {
-  color: var(--accent);
-}
-
-.reader-screen {
+  max-height: none;
+  touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
 
-.hold-progress {
-  position: fixed;
-  inset: auto 0 0;
+.quick-nav-instructions {
+  align-self: start;
+  margin: 0;
+  font-size: clamp(1rem, 2.8dvh, 1.25rem);
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.menu-button {
   width: 100%;
-  height: 0.5rem;
-  border: 0;
-  appearance: none;
-  background: var(--panel);
+}
+
+.exit-quick-nav {
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+}
+
+.menu-screen {
+  display: block;
+  touch-action: auto;
+}
+
+.menu-content {
+  width: min(100%, 48rem);
+  margin: 0 auto;
+}
+
+.menu-content > .menu-button + .menu-button {
+  margin-top: 1rem;
+}
+
+.menu-section {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.menu-section h2 {
+  margin: 0 0 1rem;
   color: var(--accent-strong);
-  pointer-events: none;
+  font-size: clamp(1.4rem, 5vw, 2rem);
 }
 
-.hold-progress::-webkit-progress-bar {
-  background: var(--panel);
+.menu-section ul {
+  margin: 0;
+  padding-left: 1.5rem;
 }
 
-.hold-progress::-webkit-progress-value {
-  background: var(--accent-strong);
+.menu-section li {
+  margin-bottom: 1rem;
+  line-height: 1.6;
 }
 
-.hold-progress::-moz-progress-bar {
-  background: var(--accent-strong);
+.menu-section h2,
+.menu-section li {
+  overflow-wrap: anywhere;
 }
 
 .selection-panel {
   grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 1.25rem;
+  height: auto;
+  min-height: calc(100dvh - clamp(2rem, 8vw, 4rem));
+  max-height: none;
 }
 
 .selection-panel h1 {
@@ -180,6 +179,7 @@ h1 {
   gap: 1rem;
 }
 
+.menu-button,
 .restaurant-options button {
   min-height: 4rem;
   padding: 1.25rem;
@@ -195,35 +195,217 @@ h1 {
   touch-action: manipulation;
 }
 
+.menu-button:hover,
 .restaurant-options button:hover {
   border-color: var(--accent-strong);
   background: #25221c;
 }
 
+.menu-button:focus-visible,
 .restaurant-options button:focus-visible {
   outline: 3px solid var(--accent-strong);
   outline-offset: 4px;
 }
 
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.storage-warning {
+  padding: 1rem;
+  border: 1px solid var(--accent);
+  line-height: 1.5;
+}
+
+.processing-panel {
+  margin-top: 2rem;
+  padding: clamp(1rem, 4vw, 2rem);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--panel);
+  line-height: 1.6;
+}
+
+.processing-panel h2 {
+  margin: 0 0 1rem;
+  color: var(--accent-strong);
+}
+
+.processing-error-actions {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.processing-indicator {
+  display: block;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 4px solid var(--line);
+  border-top-color: var(--accent-strong);
+  border-radius: 50%;
+  animation: processing-spin 1s linear infinite;
+}
+
+@keyframes processing-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .processing-indicator {
+    animation: none;
+  }
+}
+
+.recent-date {
+  display: block;
+  margin-top: 0.5rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+
+.camera-screen {
+  position: fixed;
+  inset: 0;
+  height: 100dvh;
+  background: #000;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
+  isolation: isolate;
+}
+
+.camera-view {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.camera-view video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform-origin: center;
+  pointer-events: none;
+}
+
+.camera-close,
+.camera-flashlight {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  min-width: 3rem;
+  min-height: 3rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(17, 17, 17, 0.95);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.camera-close {
+  right: max(0.75rem, env(safe-area-inset-right));
+}
+
+.camera-flashlight {
+  left: max(0.75rem, env(safe-area-inset-left));
+}
+
+.camera-flashlight[aria-pressed='true'] {
+  background: var(--accent-strong);
+  color: #111;
+}
+
+.camera-overlay {
+  position: absolute;
+  inset: auto 0 0;
+  max-height: calc(100dvh - 4.5rem);
+  padding: 0.75rem max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+  overflow-y: auto;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.9) 1rem);
+}
+
+.camera-status {
+  margin: 0.5rem 0;
+  line-height: 1.5;
+  text-shadow: 0 1px 4px #000;
+}
+
+.camera-message {
+  margin: 0.5rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: #191816;
+  line-height: 1.5;
+}
+
+.camera-message p {
+  margin: 0 0 0.75rem;
+}
+
+.capture-previews {
+  display: flex;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0.5rem 0;
+  overflow-x: auto;
+  list-style: none;
+}
+
+.capture-previews li {
+  position: relative;
+  flex: 0 0 5.5rem;
+  height: 6rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.capture-previews img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.capture-previews button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 2.75rem;
+  height: 2.75rem;
   border: 0;
+  border-radius: 0 0 0 8px;
+  background: #111;
+  color: #fff;
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+
+.camera-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.camera-actions .menu-button {
+  padding: 1rem 0.75rem;
+  font-size: 1rem;
+  text-align: center;
+}
+
+.camera-screen button:focus-visible {
+  outline: 3px solid var(--accent-strong);
+  outline-offset: -4px;
 }
 
 @media (max-height: 620px) {
   .reader-panel {
     align-content: start;
-  }
-
-  .menu-item {
-    margin: 1.25rem 0;
   }
 
   .selection-panel {
