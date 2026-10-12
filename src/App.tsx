@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type TouchEvent } from 'react';
 import { restaurantMenus, type RestaurantId, type RestaurantMenu } from './data/menus';
+import { MenuCapture } from './MenuCapture';
+import { parseRestaurantMenu } from './menuApi';
 import { useHoldToSelect } from './useHoldToSelect';
 
 type MenuSection = RestaurantMenu['sections'][number];
@@ -34,7 +36,10 @@ type PendingTap = {
 
 const SPEECH_RATES = [1, 1.5, 2, 2.5, 3, 3.5] as const;
 type SpeechRate = (typeof SPEECH_RATES)[number];
+type MenuId = RestaurantId | 'captured';
+type MenuSelection = { id: MenuId; capturedMenu: RestaurantMenu | null };
 const RESTAURANT_STORAGE_KEY = 'menu-reader.restaurantId';
+const CAPTURED_MENU_STORAGE_KEY = 'menu-reader.capturedMenu';
 const SPEECH_RATE_STORAGE_KEY = 'menu-reader.speechRate';
 const SWIPE_THRESHOLD = 70;
 const FLICK_THRESHOLD = 55;
@@ -55,17 +60,29 @@ function readSavedPreference(key: string) {
 function savePreference(key: string, value: string) {
   try {
     window.localStorage.setItem(key, value);
+    return true;
   } catch {
     // Keep the reader usable even when storage is blocked or full.
+    return false;
   }
 }
 
-function getSavedRestaurantId(): RestaurantId {
+function getSavedMenuSelection(): MenuSelection {
   const savedId = readSavedPreference(RESTAURANT_STORAGE_KEY);
+  let capturedMenu: RestaurantMenu | null = null;
+  try {
+    const savedMenu = readSavedPreference(CAPTURED_MENU_STORAGE_KEY);
+    if (savedMenu !== null) capturedMenu = parseRestaurantMenu(JSON.parse(savedMenu));
+  } catch {
+    // Invalid or outdated stored menus must not break the gesture reader.
+  }
 
-  return savedId !== null && Object.prototype.hasOwnProperty.call(restaurantMenus, savedId)
-    ? savedId as RestaurantId
-    : 'rough-and-tumble';
+  const id = savedId === 'captured' && capturedMenu !== null
+    ? 'captured'
+    : savedId !== null && Object.prototype.hasOwnProperty.call(restaurantMenus, savedId)
+      ? savedId as RestaurantId
+      : 'rough-and-tumble';
+  return { id, capturedMenu };
 }
 
 function getSavedSpeechRate(): SpeechRate {
@@ -134,12 +151,14 @@ function createAudioContext() {
 type MenuReaderProps = {
   menu: RestaurantMenu;
   speechRate: SpeechRate;
+  storageNotice: string;
   onSpeechRateChange: (rate: SpeechRate) => void;
   onSelectRestaurant: () => void;
 };
 
-function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }: MenuReaderProps) {
+function MenuReader({ menu, speechRate, storageNotice, onSpeechRateChange, onSelectRestaurant }: MenuReaderProps) {
   const navigationMode = getNavigationMode();
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [sectionIndex, setSectionIndex] = useState(0);
   const [itemIndex, setItemIndex] = useState(0);
   const { holdProgress, startHold, cancelHold } = useHoldToSelect(onSelectRestaurant);
@@ -156,6 +175,7 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
   const readSlotsRef = useRef<ReadSlots>({ section: false, item: false });
 
   useEffect(() => {
+    headingRef.current?.focus();
     return () => {
       if (pendingTapRef.current) {
         window.clearTimeout(pendingTapRef.current.timerId);
@@ -571,13 +591,17 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       onTouchCancel={handleTouchCancel}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') onSelectRestaurant();
+      }}
     >
       <section className="reader-panel" aria-label="Menu speech reader">
-        <p className="eyebrow">Version 10</p>
-        <h1 id="app-title">Menu Reader</h1>
+        <p className="eyebrow">Version 11</p>
+        <h1 id="app-title" ref={headingRef} tabIndex={-1}>Menu Reader</h1>
         <div className="restaurant-info">
           <p className="restaurant">{menu.restaurantName}</p>
           <p className="reading-speed">Speed: {speechRate}×</p>
+          {storageNotice && <p className="reading-speed" role="status">{storageNotice}</p>}
         </div>
 
         <div className="menu-item" aria-live="polite">
@@ -588,6 +612,7 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
         </div>
 
         <p className="gesture-note">Item {itemIndex + 1} of {section.items.length}</p>
+        <span className="sr-only">Hold one finger on the screen to choose or capture a menu. Keyboard users can press Escape.</span>
         <span className="sr-only">{speechText}</span>
       </section>
       <progress
@@ -600,7 +625,14 @@ function MenuReader({ menu, speechRate, onSpeechRateChange, onSelectRestaurant }
   );
 }
 
-function RestaurantSelection({ onSelect }: { onSelect: (id: RestaurantId) => void }) {
+type RestaurantSelectionProps = {
+  capturedMenu: RestaurantMenu | null;
+  onSelect: (id: MenuId) => void;
+  onCapture: () => void;
+  onBack: () => void;
+};
+
+function RestaurantSelection({ capturedMenu, onSelect, onCapture, onBack }: RestaurantSelectionProps) {
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const canSelectRef = useRef(false);
 
@@ -610,7 +642,7 @@ function RestaurantSelection({ onSelect }: { onSelect: (id: RestaurantId) => voi
 
   return (
     <main
-      className="screen"
+      className="screen selection-screen"
       aria-labelledby="selection-title"
       onPointerDown={() => { canSelectRef.current = true; }}
       onTouchStart={() => { canSelectRef.current = true; }}
@@ -623,15 +655,22 @@ function RestaurantSelection({ onSelect }: { onSelect: (id: RestaurantId) => voi
       }}
     >
       <section className="reader-panel selection-panel">
-        <p className="eyebrow">Version 10</p>
-        <h1 id="selection-title" ref={headingRef} tabIndex={-1}>Choose a restaurant</h1>
-        <p className="selection-note">Select a menu to return to the reader.</p>
+        <p className="eyebrow">Version 11</p>
+        <h1 id="selection-title" ref={headingRef} tabIndex={-1}>Choose a menu</h1>
+        <p className="selection-note">Capture your own menu, or select an example menu to return to the reader.</p>
         <div className="restaurant-options">
+          <button className="primary-button" type="button" onClick={onCapture}>Capture Menu Images</button>
+          {capturedMenu && (
+            <button type="button" onClick={() => onSelect('captured')}>
+              {capturedMenu.restaurantName}<span className="saved-menu-label">Your last captured menu</span>
+            </button>
+          )}
           {(Object.keys(restaurantMenus) as RestaurantId[]).map((id) => (
             <button key={id} type="button" onClick={() => onSelect(id)}>
               {restaurantMenus[id].restaurantName}
             </button>
           ))}
+          <button type="button" onClick={onBack}>Return to current menu</button>
         </div>
       </section>
     </main>
@@ -639,36 +678,81 @@ function RestaurantSelection({ onSelect }: { onSelect: (id: RestaurantId) => voi
 }
 
 function App() {
-  const [restaurantId, setRestaurantId] = useState<RestaurantId>(getSavedRestaurantId);
-  const [isSelectingRestaurant, setIsSelectingRestaurant] = useState(false);
+  const [selection, setSelection] = useState<MenuSelection>(getSavedMenuSelection);
+  const [screen, setScreen] = useState<'reader' | 'selection' | 'capture'>('reader');
   const [speechRate, setSpeechRate] = useState<SpeechRate>(getSavedSpeechRate);
+  const [storageNotice, setStorageNotice] = useState('');
 
   useEffect(() => {
-    savePreference(RESTAURANT_STORAGE_KEY, restaurantId);
-  }, [restaurantId]);
+    // Store the transcription, never the photos. Write it before its selection marker.
+    if (selection.capturedMenu && !savePreference(CAPTURED_MENU_STORAGE_KEY, JSON.stringify(selection.capturedMenu))) {
+      try {
+        // Never restore an older transcription as if it were the newly captured menu.
+        window.localStorage.removeItem(CAPTURED_MENU_STORAGE_KEY);
+      } catch { /* Storage may be completely blocked. */ }
+      if (selection.id === 'captured') {
+        savePreference(RESTAURANT_STORAGE_KEY, 'rough-and-tumble');
+        setStorageNotice('This menu could not be saved on this device. It will be lost on reload.');
+        return;
+      }
+    }
+    setStorageNotice('');
+    savePreference(RESTAURANT_STORAGE_KEY, selection.id);
+  }, [selection]);
 
   useEffect(() => {
     savePreference(SPEECH_RATE_STORAGE_KEY, String(speechRate));
   }, [speechRate]);
 
-  if (isSelectingRestaurant) {
+  if (screen === 'capture') {
     return (
-      <RestaurantSelection onSelect={(id) => {
-        setRestaurantId(id);
-        setIsSelectingRestaurant(false);
-      }} />
+      <MenuCapture
+        onBack={() => setScreen('selection')}
+        onAnnounce={(text) => speak(text, speechRate)}
+        onMenuReady={(menu) => {
+          setSelection({ id: 'captured', capturedMenu: menu });
+          setScreen('reader');
+          speak(`${menu.restaurantName}. Menu ready. ${menu.sections.length} sections. ${menu.sections[0].name}.`, speechRate);
+        }}
+      />
     );
   }
 
+  if (screen === 'selection') {
+    return (
+      <RestaurantSelection
+        capturedMenu={selection.capturedMenu}
+        onSelect={(id) => {
+          window.speechSynthesis?.cancel();
+          setSelection((current) => ({ ...current, id }));
+          setScreen('reader');
+        }}
+        onCapture={() => {
+          setScreen('capture');
+          speak('Capture your menu. Take a photo or choose photos. Add all pages before submitting.', speechRate);
+        }}
+        onBack={() => {
+          window.speechSynthesis?.cancel();
+          setScreen('reader');
+        }}
+      />
+    );
+  }
+
+  const menu = selection.id === 'captured'
+    ? selection.capturedMenu ?? restaurantMenus['rough-and-tumble']
+    : restaurantMenus[selection.id];
+
   return (
     <MenuReader
-      key={restaurantId}
-      menu={restaurantMenus[restaurantId]}
+      key={selection.id}
+      menu={menu}
       speechRate={speechRate}
+      storageNotice={storageNotice}
       onSpeechRateChange={setSpeechRate}
       onSelectRestaurant={() => {
         window.speechSynthesis?.cancel();
-        setIsSelectingRestaurant(true);
+        setScreen('selection');
       }}
     />
   );

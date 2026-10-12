@@ -108,3 +108,11 @@ I have added images of Twilight's menu. You will need to examine the images and 
 
 Use the browser's localStorage to maintain the current restaurant selection and speech rate even on a page reload
 
+# Version 11
+
+When you enter "Capture Mode", add a button labeled "Capture Menu Images". This enters an image capture mode. The user needs to be able to take 1 or more images of a menu, and when they indicate they are done, the app sends the post to menu-api with the images. When it gets the response from the API, it loads this menu for the quick navigation features.
+
+At this point, the api endpoint should be simply hardcoded into the frontend: https://we8asbpr8l.execute-api.us-east-1.amazonaws.com/prod/menus
+
+Images that the phone sends should be reasonably high resolution but a max of about 250kb per image.
+
