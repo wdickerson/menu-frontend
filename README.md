@@ -2,6 +2,22 @@
 
 React/TypeScript single-page app. The main screen shows a scrollable menu with
 section headings and lists. Quick Nav provides spoken flick navigation.
+The home page has a compact **Menu Reader** title and a short introduction.
+In Quick Nav, flick **right** for the next item and **left** for the previous
+item. Section navigation is unchanged: flick **up** for the next section and
+**down** for the previous section.
+
+## Browser navigation
+
+Browser **Back** returns from Quick Nav, Recent Menus, or photo capture to home.
+Inside Rename/Delete dialogs or full-screen image inspection, Back first closes
+that view and returns to its parent screen. Close, Cancel, Save, Load, and Exit
+use the same history rather than adding duplicate home screens. Submitting
+photos returns home to processing; Back does not reopen the submitted photos.
+Leaving photo capture without submitting discards its photos. Forward restores
+screens where possible, but discarded photos are not restored. Saved menu edits
+are not undone by Back/Forward. Navigation does not change the URL, and refreshing
+always starts at home with the saved menu and speech rate.
 
 ## Development and checks
 
@@ -71,12 +87,24 @@ previous menu. Closing the camera before submitting discards its unsent photos.
 Cancelling a request cannot
 guarantee that the backend stops processing an already-submitted upload.
 
-Returned menus and the selected menu are saved in browser localStorage; the
-most recent ten captured menus appear under **Reload a Recent Menu**, alongside
-Rough & Tumble and Twilight. Camera images are not stored in localStorage. A
-storage failure leaves the menu usable in the current session and displays a
-warning. Speech rate is also preserved, and existing saved restaurant choices
-are migrated automatically.
+Returned menus and the selected menu are saved in browser localStorage. Up to
+ten saved menus appear as cards under **Reload a Recent Menu**. Each card has
+**Load**, **Rename**, and **Delete** buttons. Rename opens a full-page dialog
+with the current name and **Cancel** / **Save** buttons; blank names cannot be
+saved. Delete opens a full-page confirmation with **Cancel** / **Delete** buttons.
+Changes are persisted immediately. Deleting the loaded menu returns to the
+**No menu loaded** home page and disables Quick Nav until a menu is explicitly
+loaded, even if other recent menus remain. This empty selection persists across
+reloads. When a menu is loaded, its restaurant name appears above the sections
+on the home page.
+
+First-time visitors receive **Rough & Tumble (Sample Menu)** in their saved
+library. It can be renamed or deleted like any other menu, and is not restored
+on later visits unless localStorage is cleared. Existing saved libraries are
+preserved without injecting a sample. The former fixed Rough & Tumble and
+Twilight choices are no longer displayed. Camera images are not stored in
+localStorage. A storage failure leaves changes usable in the current session
+and displays a warning. Speech rate is also preserved.
 
 ## Browser requirements and deployment
 

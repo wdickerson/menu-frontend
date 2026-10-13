@@ -178,3 +178,35 @@ From the preview screen, the user has two options: "Add another image" or "Done"
 
 Send images at a maximum of 350kb each. Also, ensure images are at no higher of a resolution than 1024 pixels in either dimension, maintaining the original aspect ratio.
 
+## Version 17
+
+Add basic management functions to the "Recent Menus" page
+
+Keep displaying each recent menu as a card.
+
+Now, give each restaurant card three buttons, side by side below the restaurant name:
+"Load" - loads the menu.
+"Rename" - Opens a full-page modal with a text input, pre-populated to the current menu name. "Cancel" and "Save" buttons at the bottom.
+"Delete" - Opens a full-page modal to confirm delete. "Cancel" and "Delete" buttons at the bottom.
+
+Change the behavior of the sample menus. Remove Twilight altogether. If the user has never visited the site, include "Rough & Tumble (Sample Menu)". It should be placed in localStorage just like any other menu. The user may delete or rename it like any other menu. After that, it will not automatically re-appear (unless the user clears localStorage, because then we will assume they are brand new again).
+
+## Version 18
+
+The browsers back button should work as expected. For example:
+From the Quick Nave page, tapping back should go to the home page.
+From the reload a recent menu page, tapping back should go to home page.
+From the "preview your menu" image page, tapping back should go to the homepage
+
+Audit the various pages and make sure the "back" button will work as a user would expect.
+
+A hard refresh of the page can still just re-load the home page.
+
+## Version 19
+
+Small cleanup tasks.
+
+Add a "Menu Reader" title to the top of the home page. Keep it pretty small. Below, a short descriptions:
+"Turn restaurant menus into skimmable audio with quick navigation gestures. Use your phone's camera to capture menus, or reload a recent menu."
+
+Reverse the left/right flick navigation direction. Feedback is that reversing the direction is more natural for screen reader users. Keep the current up/down direction.

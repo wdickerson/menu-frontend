@@ -4,6 +4,7 @@ export type RecentMenu = { id: string; capturedAt: string; menu: RestaurantMenu 
 export type MenuLibrary = { selectedId: string; recentMenus: RecentMenu[] };
 const LIBRARY_KEY = 'menu-reader.menuLibrary';
 const MAX_RECENT_MENUS = 10;
+const SAMPLE_ID = 'sample-rough-and-tumble';
 
 export function isRestaurantMenu(value: unknown): value is RestaurantMenu {
   if (!value || typeof value !== 'object') return false;
@@ -16,25 +17,26 @@ export function isRestaurantMenu(value: unknown): value is RestaurantMenu {
 }
 
 export function getMenuChoices(library: MenuLibrary) {
-  return [
-    ...library.recentMenus,
-    ...Object.entries(restaurantMenus).map(([id, menu]) => ({ id, menu, capturedAt: null })),
-  ];
+  return library.recentMenus;
 }
 
-export function getSelectedMenu(library: MenuLibrary): RestaurantMenu {
+export function getSelectedMenu(library: MenuLibrary): RestaurantMenu | null {
   return getMenuChoices(library).find(({ id }) => id === library.selectedId)?.menu
-    ?? restaurantMenus['rough-and-tumble'];
+    ?? null;
 }
 
 export function loadMenuLibrary(): MenuLibrary {
-  const fallback: MenuLibrary = { selectedId: 'rough-and-tumble', recentMenus: [] };
+  const fallback: MenuLibrary = { selectedId: '', recentMenus: [] };
   try {
     const raw = window.localStorage.getItem(LIBRARY_KEY);
-    if (!raw) {
+    if (raw === null) {
       const legacyId = window.localStorage.getItem('menu-reader.restaurantId');
-      if (legacyId && Object.hasOwn(restaurantMenus, legacyId)) fallback.selectedId = legacyId;
-      return fallback;
+      // Existing visitors do not receive a new sample when upgrading.
+      if (legacyId !== null) return fallback;
+      return { selectedId: SAMPLE_ID, recentMenus: [{ id: SAMPLE_ID,
+        capturedAt: new Date().toISOString(),
+        menu: { ...restaurantMenus['rough-and-tumble'], restaurantName: 'Rough & Tumble (Sample Menu)' },
+      }] };
     }
     const saved: unknown = JSON.parse(raw);
     if (!saved || typeof saved !== 'object') return fallback;
@@ -42,7 +44,8 @@ export function loadMenuLibrary(): MenuLibrary {
     if (!Array.isArray(recentMenus)) return fallback;
     const ids = new Set<string>();
     const validRecentMenus = recentMenus.filter((entry): entry is RecentMenu => {
-      if (!entry || typeof entry.id !== 'string' || !entry.id.startsWith('captured-')
+      if (!entry || typeof entry.id !== 'string'
+        || (!entry.id.startsWith('captured-') && entry.id !== SAMPLE_ID)
         || ids.has(entry.id) || typeof entry.capturedAt !== 'string'
         || !Number.isFinite(Date.parse(entry.capturedAt)) || !isRestaurantMenu(entry.menu)) return false;
       ids.add(entry.id);
@@ -50,8 +53,8 @@ export function loadMenuLibrary(): MenuLibrary {
     }).slice(0, MAX_RECENT_MENUS);
     const library = { selectedId: typeof selectedId === 'string' ? selectedId : fallback.selectedId,
       recentMenus: validRecentMenus };
-    if (!getMenuChoices(library).some(({ id }) => id === library.selectedId)) {
-      library.selectedId = fallback.selectedId;
+    if (library.selectedId !== '' && !getMenuChoices(library).some(({ id }) => id === library.selectedId)) {
+      library.selectedId = library.recentMenus[0]?.id ?? '';
     }
     return library;
   } catch {
@@ -62,6 +65,19 @@ export function loadMenuLibrary(): MenuLibrary {
 export function addRecentMenu(library: MenuLibrary, menu: RestaurantMenu): MenuLibrary {
   const entry = { id: `captured-${crypto.randomUUID()}`, capturedAt: new Date().toISOString(), menu };
   return { selectedId: entry.id, recentMenus: [entry, ...library.recentMenus].slice(0, MAX_RECENT_MENUS) };
+}
+
+export function renameRecentMenu(library: MenuLibrary, id: string, name: string): MenuLibrary {
+  const restaurantName = name.trim();
+  if (!restaurantName) return library;
+  return { ...library, recentMenus: library.recentMenus.map((entry) => entry.id === id
+    ? { ...entry, menu: { ...entry.menu, restaurantName } } : entry) };
+}
+
+export function deleteRecentMenu(library: MenuLibrary, id: string): MenuLibrary {
+  const recentMenus = library.recentMenus.filter((entry) => entry.id !== id);
+  return { selectedId: library.selectedId === id ? '' : library.selectedId,
+    recentMenus };
 }
 
 export function saveMenuLibrary(library: MenuLibrary): boolean {

@@ -7,9 +7,13 @@ type CameraCaptureProps = {
   inputRef: RefObject<HTMLInputElement | null>;
   onClose: () => void;
   onSubmit: (queue: ImagePreparationQueue) => void;
+  expandedImageId: string | null;
+  onExpandImage: (id: string) => void;
+  onCloseImage: () => void;
 };
 
-export default function CameraCapture({ inputRef, onClose, onSubmit }: CameraCaptureProps) {
+export default function CameraCapture({ inputRef, onClose, onSubmit, expandedImageId,
+  onExpandImage, onCloseImage }: CameraCaptureProps) {
   const addButtonRef = useRef<HTMLButtonElement | null>(null);
   const expandedCloseRef = useRef<HTMLButtonElement | null>(null);
   const previewButtonsRef = useRef(new Map<string, HTMLButtonElement>());
@@ -19,7 +23,6 @@ export default function CameraCapture({ inputRef, onClose, onSubmit }: CameraCap
   const queueRef = useRef<ImagePreparationQueue | null>(null);
   const submittedRef = useRef(false);
   const [images, setImages] = useState<CapturedImage[]>([]);
-  const [expandedImageId, setExpandedImageId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const expandedImage = images.find(({ id }) => id === expandedImageId);
 
@@ -38,6 +41,7 @@ export default function CameraCapture({ inputRef, onClose, onSubmit }: CameraCap
 
   useEffect(() => {
     if (expandedImageId) {
+      returnFocusRef.current = expandedImageId;
       expandedCloseRef.current?.focus();
       const previousOverflow = document.documentElement.style.overflow;
       document.documentElement.style.overflow = 'hidden';
@@ -103,7 +107,7 @@ export default function CameraCapture({ inputRef, onClose, onSubmit }: CameraCap
 
   function closeExpandedImage() {
     returnFocusRef.current = expandedImage?.id ?? 'add';
-    setExpandedImageId(null);
+    onCloseImage();
   }
 
   if (expandedImage) return (
@@ -136,7 +140,7 @@ export default function CameraCapture({ inputRef, onClose, onSubmit }: CameraCap
           {images.map((image, index) => <li key={image.id}>
             <button className="capture-thumbnail" type="button" aria-label={`Expand image ${index + 1}`}
               ref={(button) => { if (button) previewButtonsRef.current.set(image.id, button); else previewButtonsRef.current.delete(image.id); }}
-              onClick={() => setExpandedImageId(image.id)}>
+              onClick={() => onExpandImage(image.id)}>
               <img src={image.url} alt={`Captured menu image ${index + 1}`} />
             </button>
             <button className="capture-remove" type="button" aria-label={`Remove image ${index + 1}`}
