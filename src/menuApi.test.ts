@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { captureMenuImage, MAX_IMAGE_BYTES, MAX_IMAGE_FILE_BYTES, MENU_API_URL, postMenuImages } from './menuApi';
+import { prepareMenuImage, MAX_IMAGE_BYTES, MAX_IMAGE_FILE_BYTES, MENU_API_URL, postMenuImages } from './menuApi';
 
 const menu = { restaurantName: 'New Cafe', sections: [{ name: 'Lunch', items: ['Soup 8'] }] };
 const image = () => new Blob(['jpeg'], { type: 'image/jpeg' });
@@ -42,15 +42,15 @@ describe('menu API', () => {
     await expect(postMenuImages([image()], signal())).rejects.toThrow('Take clearer photos');
   });
 
-  it('accepts exactly 250,000 bytes per image but never posts an image one byte over', async () => {
+  it('accepts exactly 350,000 bytes per image but never posts an image one byte over', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(menu)));
     vi.stubGlobal('fetch', fetchMock);
     const atLimit = new Blob([new Uint8Array(MAX_IMAGE_FILE_BYTES)], { type: 'image/jpeg' });
     expect(await postMenuImages([atLimit], signal())).toEqual(menu);
-    expect(fetchMock.mock.calls[0][1].body.get('images').size).toBe(250_000);
+    expect(fetchMock.mock.calls[0][1].body.get('images').size).toBe(350_000);
     fetchMock.mockClear();
     const oversized = new Blob([new Uint8Array(MAX_IMAGE_FILE_BYTES + 1)], { type: 'image/jpeg' });
-    await expect(postMenuImages([image(), oversized], signal())).rejects.toThrow('250 KB');
+    await expect(postMenuImages([image(), oversized], signal())).rejects.toThrow('350 KB');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -70,62 +70,162 @@ describe('menu API', () => {
   });
 });
 
-describe('camera JPEG capture', () => {
-  it('crops to match pinch zoom and resizes large camera frames', async () => {
+describe('native photo JPEG preparation', () => {
+  function mockPhoto(width = 1000, height = 800, fails = false) {
+    vi.stubGlobal('Image', class {
+      naturalWidth = width;
+      naturalHeight = height;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_value: string) { if (fails) this.onerror?.(); else this.onload?.(); }
+    });
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL: vi.fn(() => 'blob:photo'), revokeObjectURL });
+    return revokeObjectURL;
+  }
+
+  it.each([[6000, 4000, 1024, 682], [4000, 6000, 682, 1024], [6000, 2000, 1024, 341],
+    [2000, 6000, 341, 1024], [6000, 6000, 1024, 1024], [1024, 1024, 1024, 1024], [600, 400, 600, 400]])
+    ('fits %i by %i photos inside 1024 by 1024 without cropping or upscaling', async (width, height, outputWidth, outputHeight) => {
+    const revokeObjectURL = mockPhoto(width, height);
     const drawImage = vi.fn();
     const toBlob = vi.fn((callback: BlobCallback) => callback(image()));
     const canvas = { width: 0, height: 0, getContext: () => ({ drawImage }), toBlob };
     vi.stubGlobal('document', { createElement: () => canvas });
-    const video = { videoWidth: 6000, videoHeight: 4000 } as HTMLVideoElement;
-    await captureMenuImage(video, 2);
-    expect(drawImage).toHaveBeenCalledWith(video, 1500, 1000, 3000, 2000, 0, 0, 2400, 1600);
+    await prepareMenuImage(image());
+    expect(drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0, outputWidth, outputHeight);
+    expect(canvas.width).toBe(outputWidth);
+    expect(canvas.height).toBe(outputHeight);
     expect(toBlob).toHaveBeenCalledWith(expect.any(Function), 'image/jpeg', 0.88);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:photo');
   });
 
   it('recompresses oversized JPEGs', async () => {
+    mockPhoto();
     let calls = 0;
     const toBlob = vi.fn((callback: BlobCallback) => callback(++calls === 1
       ? new Blob([new Uint8Array(MAX_IMAGE_FILE_BYTES + 1)], { type: 'image/jpeg' }) : image()));
-    vi.stubGlobal('document', { createElement: () => ({ getContext: () => ({ drawImage: vi.fn() }), toBlob }) });
-    expect((await captureMenuImage({ videoWidth: 1000, videoHeight: 800 } as HTMLVideoElement, 1)).size).toBe(4);
+    const drawImage = vi.fn();
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => ({ drawImage }), toBlob }) });
+    expect((await prepareMenuImage(image())).size).toBe(4);
     expect(toBlob).toHaveBeenCalledTimes(2);
+    expect(drawImage).toHaveBeenCalledTimes(1);
   });
 
-  it('returns a capture exactly at the 250 KB limit without additional compression', async () => {
+  it('returns a capture exactly at the 350 KB limit without additional compression', async () => {
+    mockPhoto();
     const atLimit = new Blob([new Uint8Array(MAX_IMAGE_FILE_BYTES)], { type: 'image/jpeg' });
     const toBlob = vi.fn((callback: BlobCallback) => callback(atLimit));
     vi.stubGlobal('document', { createElement: () => ({ getContext: () => ({ drawImage: vi.fn() }), toBlob }) });
-    expect(await captureMenuImage({ videoWidth: 1000, videoHeight: 800 } as HTMLVideoElement, 1)).toBe(atLimit);
+    expect(await prepareMenuImage(image())).toBe(atLimit);
     expect(toBlob).toHaveBeenCalledTimes(1);
   });
 
-  it('reduces dimensions if quality changes alone cannot reach 250 KB', async () => {
+  it('reduces dimensions if quality changes alone cannot reach 350 KB', async () => {
+    mockPhoto();
     const oversized = new Blob([new Uint8Array(MAX_IMAGE_FILE_BYTES + 1)], { type: 'image/jpeg' });
     const drawImage = vi.fn();
     let calls = 0;
     const toBlob = vi.fn((callback: BlobCallback) => callback(++calls <= 4 ? oversized : image()));
     const canvas = { width: 0, height: 0, getContext: () => ({ drawImage }), toBlob };
     vi.stubGlobal('document', { createElement: () => canvas });
-    const video = { videoWidth: 1000, videoHeight: 800 } as HTMLVideoElement;
-    expect((await captureMenuImage(video, 1)).size).toBeLessThanOrEqual(MAX_IMAGE_FILE_BYTES);
-    expect(drawImage).toHaveBeenLastCalledWith(video, 0, 0, 1000, 800, 0, 0, 800, 640);
+    expect((await prepareMenuImage(image())).size).toBeLessThanOrEqual(MAX_IMAGE_FILE_BYTES);
+    expect(drawImage).toHaveBeenLastCalledWith(expect.anything(), 0, 0, 800, 640);
+    expect(drawImage).toHaveBeenCalledTimes(2);
   });
 
   it('rejects a capture that cannot be compressed rather than returning an oversized image', async () => {
+    const revokeObjectURL = mockPhoto();
     const oversized = new Blob([new Uint8Array(MAX_IMAGE_FILE_BYTES + 1)], { type: 'image/jpeg' });
     const toBlob = vi.fn((callback: BlobCallback) => callback(oversized));
     vi.stubGlobal('document', { createElement: () => ({ getContext: () => ({ drawImage: vi.fn() }), toBlob }) });
-    await expect(captureMenuImage({ videoWidth: 1000, videoHeight: 800 } as HTMLVideoElement, 1))
-      .rejects.toThrow('compressed to 250 KB');
+    await expect(prepareMenuImage(image()))
+      .rejects.toThrow('compressed to 350 KB');
     expect(toBlob).toHaveBeenCalledTimes(12);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:photo');
   });
 
-  it('handles an unready camera or a failed encoder', async () => {
-    await expect(captureMenuImage({ videoWidth: 0, videoHeight: 0 } as HTMLVideoElement, 1))
-      .rejects.toThrow('not ready');
+  it('handles an empty image, invalid dimensions, or a failed encoder', async () => {
+    await expect(prepareMenuImage(new Blob())).rejects.toThrow('empty');
+    mockPhoto(0, 0);
+    await expect(prepareMenuImage(image())).rejects.toThrow('invalid dimensions');
+    const revokeObjectURL = mockPhoto();
     vi.stubGlobal('document', { createElement: () => ({ getContext: () => ({ drawImage: vi.fn() }),
       toBlob: (callback: BlobCallback) => callback(null) }) });
-    await expect(captureMenuImage({ videoWidth: 1000, videoHeight: 800 } as HTMLVideoElement, 1))
-      .rejects.toThrow('could not be captured');
+    await expect(prepareMenuImage(image())).rejects.toThrow('could not be prepared');
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:photo');
+  });
+
+  it('reports unsupported or corrupt images and cleans up their URLs', async () => {
+    const revokeObjectURL = mockPhoto(1000, 800, true);
+    await expect(prepareMenuImage(image())).rejects.toThrow('Use a JPEG');
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:photo');
+  });
+
+  it('converts browser-decodable non-JPEG photos to JPEG', async () => {
+    mockPhoto();
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => ({ drawImage: vi.fn() }),
+      toBlob: (callback: BlobCallback) => callback(image()) }) });
+    expect((await prepareMenuImage(new Blob(['png'], { type: 'image/png' }))).type).toBe('image/jpeg');
+  });
+
+  it('requests resized bitmap decoding for JPEGs and closes the bitmap', async () => {
+    // SOF header describing a 6000-by-4000 image, followed by end-of-image.
+    const file = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 9, 8, 0x0f, 0xa0, 0x17, 0x70, 0, 0, 0xff, 0xd9])]);
+    const bitmap = { width: 1024, height: 682, close: vi.fn() };
+    const createBitmap = vi.fn().mockResolvedValue(bitmap);
+    const drawImage = vi.fn();
+    vi.stubGlobal('createImageBitmap', createBitmap);
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => ({ drawImage }),
+      toBlob: (callback: BlobCallback) => callback(image()) }) });
+    await prepareMenuImage(file);
+    expect(createBitmap).toHaveBeenCalledWith(file, { imageOrientation: 'from-image',
+      resizeWidth: 1024, resizeHeight: 682, resizeQuality: 'high' });
+    expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 0, 1024, 682);
+    expect(bitmap.close).toHaveBeenCalledOnce();
+  });
+
+  it('falls back when resized bitmap decoding is unsupported', async () => {
+    mockPhoto(6000, 4000);
+    vi.stubGlobal('createImageBitmap', vi.fn().mockRejectedValue(new Error('Unsupported options')));
+    const drawImage = vi.fn();
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => ({ drawImage }),
+      toBlob: (callback: BlobCallback) => callback(image()) }) });
+    const file = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 9, 8, 0x0f, 0xa0, 0x17, 0x70, 0, 0, 0xff, 0xd9])]);
+    expect((await prepareMenuImage(file)).type).toBe('image/jpeg');
+    expect(drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0, 1024, 682);
+  });
+
+  it('does not decode a photo cancelled before preparation starts', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const createBitmap = vi.fn();
+    vi.stubGlobal('createImageBitmap', createBitmap);
+    await expect(prepareMenuImage(image(), controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(createBitmap).not.toHaveBeenCalled();
+  });
+
+  it('does not encode a photo cancelled during bitmap decoding and closes the result', async () => {
+    const controller = new AbortController();
+    const bitmap = { width: 1024, height: 682, close: vi.fn() };
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => { controller.abort(); return bitmap; }));
+    const file = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 9, 8, 0x0f, 0xa0, 0x17, 0x70, 0, 0, 0xff, 0xd9])]);
+    await expect(prepareMenuImage(file, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(bitmap.close).toHaveBeenCalledOnce();
+  });
+
+  it('cancels fallback image loading promptly and releases its URL', async () => {
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL: () => 'blob:loading', revokeObjectURL });
+    const loadingImage = { onload: null, onerror: null, src: '' };
+    vi.stubGlobal('Image', class { constructor() { return loadingImage; } });
+    const controller = new AbortController();
+    const prepared = prepareMenuImage(image(), controller.signal);
+    controller.abort();
+    await expect(prepared).rejects.toMatchObject({ name: 'AbortError' });
+    expect(loadingImage.src).toBe('');
+    expect(loadingImage.onload).toBeNull();
+    expect(loadingImage.onerror).toBeNull();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:loading');
   });
 });

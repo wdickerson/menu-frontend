@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type TouchEvent } from 'react';
+import { flushSync } from 'react-dom';
 import type { RestaurantMenu } from './data/menus';
 import CameraCapture from './CameraCapture';
 import { postMenuImages } from './menuApi';
+import { ImagePreparationQueue } from './imagePreparationQueue';
 import { addRecentMenu, getMenuChoices, getSelectedMenu, loadMenuLibrary, saveMenuLibrary,
   type MenuLibrary } from './menuLibrary';
 
@@ -575,7 +577,7 @@ function RestaurantSelection({ library, onSelect, onClose }: {
       aria-labelledby="selection-title"
     >
       <section className="reader-panel selection-panel">
-        <p className="eyebrow">Version 15</p>
+        <p className="eyebrow">Version 16</p>
         <h1 id="selection-title" ref={headingRef} tabIndex={-1}>Reload a Recent Menu</h1>
         <p className="selection-note">Choose a saved menu or one of the example menus.</p>
         <div className="restaurant-options">
@@ -602,34 +604,41 @@ function App() {
   const [storageWarning, setStorageWarning] = useState('');
   const [processing, setProcessing] = useState(false);
   const [processingError, setProcessingError] = useState('');
-  const pendingImagesRef = useRef<Blob[]>([]);
-  const uploadRef = useRef<{ controller: AbortController; timeout: number } | null>(null);
+  const pendingImagesRef = useRef<ImagePreparationQueue | null>(null);
+  const captureInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadRef = useRef<{ controller: AbortController; timeout: number | null } | null>(null);
 
   useEffect(() => () => {
     const upload = uploadRef.current;
     uploadRef.current = null;
     if (upload) {
-      window.clearTimeout(upload.timeout);
+      if (upload.timeout !== null) window.clearTimeout(upload.timeout);
       upload.controller.abort();
     }
+    pendingImagesRef.current?.dispose();
   }, []);
 
-  async function processMenu(images: Blob[]) {
-    if (uploadRef.current || !images.length) return;
-    pendingImagesRef.current = images;
+  async function processMenu(queue: ImagePreparationQueue | null) {
+    if (uploadRef.current || !queue) return;
+    pendingImagesRef.current = queue;
     setScreen('menu');
     setFocusTarget(null);
     setProcessingError('');
     setProcessing(true);
     const controller = new AbortController();
     let timedOut = false;
-    const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, 35_000);
-    uploadRef.current = { controller, timeout };
+    const upload = { controller, timeout: null as number | null };
+    uploadRef.current = upload;
     try {
+      const images = await queue.collect(controller.signal);
+      if (uploadRef.current !== upload || controller.signal.aborted) return;
+      // Give the API its full timeout, regardless of on-device preparation time.
+      upload.timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, 35_000);
       const menu = await postMenuImages(images, controller.signal);
       if (uploadRef.current?.controller !== controller || controller.signal.aborted) return;
       setLibrary((current) => addRecentMenu(current, menu));
-      pendingImagesRef.current = [];
+      queue.dispose();
+      pendingImagesRef.current = null;
       setFocusTarget('load');
     } catch (error) {
       if (uploadRef.current?.controller === controller) {
@@ -638,7 +647,7 @@ function App() {
             : error instanceof Error ? error.message : 'The menu could not be loaded. Try again.');
       }
     } finally {
-      window.clearTimeout(timeout);
+      if (upload.timeout !== null) window.clearTimeout(upload.timeout);
       if (uploadRef.current?.controller === controller) {
         uploadRef.current = null;
         setProcessing(false);
@@ -650,17 +659,19 @@ function App() {
     const upload = uploadRef.current;
     uploadRef.current = null;
     if (upload) {
-      window.clearTimeout(upload.timeout);
+      if (upload.timeout !== null) window.clearTimeout(upload.timeout);
       upload.controller.abort();
     }
-    pendingImagesRef.current = [];
+    pendingImagesRef.current?.dispose();
+    pendingImagesRef.current = null;
     setProcessing(false);
     setProcessingError('');
     setFocusTarget('capture');
   }
 
   function dismissProcessingError() {
-    pendingImagesRef.current = [];
+    pendingImagesRef.current?.dispose();
+    pendingImagesRef.current = null;
     setProcessingError('');
     setFocusTarget('capture');
   }
@@ -677,6 +688,7 @@ function App() {
 
   if (screen === 'capture') {
     return <CameraCapture
+      inputRef={captureInputRef}
       onClose={() => {
         setFocusTarget('capture');
         setScreen('menu');
@@ -723,8 +735,12 @@ function App() {
       onCancelProcessing={cancelProcessing}
       onDismissProcessingError={dismissProcessingError}
       onCaptureMenu={() => {
-        dismissProcessingError();
-        setScreen('capture');
+        // Keep the native picker inside the original user gesture on mobile.
+        flushSync(() => {
+          dismissProcessingError();
+          setScreen('capture');
+        });
+        captureInputRef.current?.click();
       }}
       onEnterQuickNav={() => {
         dismissProcessingError();

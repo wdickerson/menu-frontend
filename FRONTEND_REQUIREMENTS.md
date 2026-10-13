@@ -104,17 +104,17 @@ This is the only page which is geared towards sighted users. In future revisions
 
 I have added images of Twilight's menu. You will need to examine the images and create the required JSON for Twilight's menu.
 
-# Version 10
+## Version 10
 
 Use the browser's localStorage to maintain the current restaurant selection and speech rate even on a page reload
 
-# Version 11
+## Version 11
 
 Remove the "scroll" mode altogether. Remove all notions of "mode". We are proceeding with only "flick" control.
 
 Remove the "hold for select" logic. Instead, add a full-width button at the top of the main page labeled "Load Menu". This button should open the menu selection page.
 
-# Version 12
+## Version 12
 
 This version makes the app more accessible for users who use screen readers.
 
@@ -165,4 +165,16 @@ Ensure images that are posted do not exceen 250kb each
 Add a flashlight toggle to the top left of the image capture screen. Since we don't have native flash via getUserMedia, this will have to do.
 
 Once a user taps "Load this Menu", return to the main screen and display a loading screen while the menu is processing. The API call may take 20+ seconds, so it is important to let the user know that things are processing.
+
+## Version 16
+
+Replace the getUserMedia version of the image capture flow with one that uses the phone's native camera. The getUserMedia version is unable to capture distant menus clearly enough.
+
+Keep the UX flow as similar as possible.
+
+As soon as the user taps "Capture a New Menu", the phone's native camera view should appear. When they capture the first image, they are returned to a preview screen that shows the captured images as small icons, with an "x" in the top right corner to remove. Tapping the icon expands the image to full screen so the user can see if the text is legible (a "Close" button is at the top right).
+
+From the preview screen, the user has two options: "Add another image" or "Done". Tapping "Done" sends the POST and proceeds with the existing UX flow.
+
+Send images at a maximum of 350kb each. Also, ensure images are at no higher of a resolution than 1024 pixels in either dimension, maintaining the original aspect ratio.
 
