@@ -69,7 +69,7 @@ multipart form data to the configured API URL, defaulting to:
 https://we8asbpr8l.execute-api.us-east-1.amazonaws.com/prod/menus
 
 There are at most ten photos and 4,500,000 combined image bytes. Each photo is
-resized to at most 1024 pixels in either dimension, preserving the original aspect
+resized to at most 1568 pixels in either dimension, preserving the original aspect
 ratio without cropping or upscaling, and compressed to at most
 350 KB (350,000 bytes), reducing JPEG quality and dimensions as needed. The same
 per-image limit is checked again before posting; oversized images are never sent.

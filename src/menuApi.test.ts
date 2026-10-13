@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { prepareMenuImage, MAX_IMAGE_BYTES, MAX_IMAGE_FILE_BYTES, MENU_API_URL, postMenuImages } from './menuApi';
+import { prepareMenuImage, MAX_IMAGE_BYTES, MAX_IMAGE_FILE_BYTES, MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT,
+  MENU_API_URL, postMenuImages } from './menuApi';
 
 const menu = { restaurantName: 'New Cafe', sections: [{ name: 'Lunch', items: ['Soup 8'] }] };
 const image = () => new Blob(['jpeg'], { type: 'image/jpeg' });
@@ -71,6 +72,13 @@ describe('menu API', () => {
 });
 
 describe('native photo JPEG preparation', () => {
+  function expectedDimensions(width: number, height: number) {
+    if (Math.max(width, height) <= 1568) return { width, height };
+    return width >= height
+      ? { width: 1568, height: Math.max(1, Math.floor(height * 1568 / width)) }
+      : { width: Math.max(1, Math.floor(width * 1568 / height)), height: 1568 };
+  }
+
   function mockPhoto(width = 1000, height = 800, fails = false) {
     vi.stubGlobal('Image', class {
       naturalWidth = width;
@@ -84,19 +92,25 @@ describe('native photo JPEG preparation', () => {
     return revokeObjectURL;
   }
 
-  it.each([[6000, 4000, 1024, 682], [4000, 6000, 682, 1024], [6000, 2000, 1024, 341],
-    [2000, 6000, 341, 1024], [6000, 6000, 1024, 1024], [1024, 1024, 1024, 1024], [600, 400, 600, 400]])
-    ('fits %i by %i photos inside 1024 by 1024 without cropping or upscaling', async (width, height, outputWidth, outputHeight) => {
+  it.each([[6000, 4000], [4000, 6000], [6000, 2000], [2000, 6000], [6000, 6000],
+    [MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT], [1569, 1000], [1000, 1569],
+    [1567, 1200], [1200, 1567], [600, 400]])
+    ('fits %i by %i photos inside configured limits without cropping or upscaling', async (width, height) => {
+    const { width: outputWidth, height: outputHeight } = expectedDimensions(width, height);
     const revokeObjectURL = mockPhoto(width, height);
     const drawImage = vi.fn();
-    const toBlob = vi.fn((callback: BlobCallback) => callback(image()));
+    const toBlob = vi.fn((callback: BlobCallback, _type?: string, _quality?: number) => callback(image()));
     const canvas = { width: 0, height: 0, getContext: () => ({ drawImage }), toBlob };
     vi.stubGlobal('document', { createElement: () => canvas });
     await prepareMenuImage(image());
     expect(drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0, outputWidth, outputHeight);
     expect(canvas.width).toBe(outputWidth);
     expect(canvas.height).toBe(outputHeight);
-    expect(toBlob).toHaveBeenCalledWith(expect.any(Function), 'image/jpeg', 0.88);
+    expect(Math.max(canvas.width, canvas.height)).toBe(Math.min(1568, Math.max(width, height)));
+    expect(toBlob).toHaveBeenCalledWith(expect.any(Function), 'image/jpeg', expect.any(Number));
+    const quality = toBlob.mock.calls[0][2];
+    expect(quality).toBeGreaterThan(0);
+    expect(quality).toBeLessThanOrEqual(1);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:photo');
   });
 
@@ -169,10 +183,14 @@ describe('native photo JPEG preparation', () => {
     expect((await prepareMenuImage(new Blob(['png'], { type: 'image/png' }))).type).toBe('image/jpeg');
   });
 
-  it('requests resized bitmap decoding for JPEGs and closes the bitmap', async () => {
-    // SOF header describing a 6000-by-4000 image, followed by end-of-image.
-    const file = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 9, 8, 0x0f, 0xa0, 0x17, 0x70, 0, 0, 0xff, 0xd9])]);
-    const bitmap = { width: 1024, height: 682, close: vi.fn() };
+  it.each([[6000, 4000], [4000, 6000], [6000, 6000], [1569, 1000], [1000, 1569],
+    [1568, 1568], [1567, 1200], [1200, 1567], [600, 400]])
+    ('decodes %i by %i JPEGs at the exact capped size without upscaling', async (width, height) => {
+    // SOF header describing the original dimensions, followed by end-of-image.
+    const file = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 9, 8,
+      height >> 8, height & 0xff, width >> 8, width & 0xff, 0, 0, 0xff, 0xd9])]);
+    const dimensions = expectedDimensions(width, height);
+    const bitmap = { ...dimensions, close: vi.fn() };
     const createBitmap = vi.fn().mockResolvedValue(bitmap);
     const drawImage = vi.fn();
     vi.stubGlobal('createImageBitmap', createBitmap);
@@ -180,8 +198,8 @@ describe('native photo JPEG preparation', () => {
       toBlob: (callback: BlobCallback) => callback(image()) }) });
     await prepareMenuImage(file);
     expect(createBitmap).toHaveBeenCalledWith(file, { imageOrientation: 'from-image',
-      resizeWidth: 1024, resizeHeight: 682, resizeQuality: 'high' });
-    expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 0, 1024, 682);
+      resizeWidth: dimensions.width, resizeHeight: dimensions.height, resizeQuality: 'high' });
+    expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 0, dimensions.width, dimensions.height);
     expect(bitmap.close).toHaveBeenCalledOnce();
   });
 
@@ -193,7 +211,8 @@ describe('native photo JPEG preparation', () => {
       toBlob: (callback: BlobCallback) => callback(image()) }) });
     const file = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 9, 8, 0x0f, 0xa0, 0x17, 0x70, 0, 0, 0xff, 0xd9])]);
     expect((await prepareMenuImage(file)).type).toBe('image/jpeg');
-    expect(drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0, 1024, 682);
+    const dimensions = expectedDimensions(6000, 4000);
+    expect(drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0, dimensions.width, dimensions.height);
   });
 
   it('does not decode a photo cancelled before preparation starts', async () => {
