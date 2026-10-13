@@ -10,6 +10,25 @@ section headings and lists. Quick Nav provides spoken flick navigation.
 - Run regression tests with `npm test`.
 - Build with `npm run build`.
 
+### Choose the API endpoint
+
+Vite loads a local dotenv file from this frontend directory. Copy
+[.env.example](.env.example) to a local dotenv file named `.env` to use
+**http://127.0.0.1:8000/menus** by default on your machine. Start the local API
+separately using the [API startup instructions](../menu-api/README.md).
+
+Set `VITE_MENU_API_URL` to the **complete endpoint**, including `/menus`.
+If the variable is missing, empty, or whitespace-only, the frontend uses
+https://we8asbpr8l.execute-api.us-east-1.amazonaws.com/prod/menus instead.
+Local dotenv files are gitignored; the example is safe to commit.
+Restart Vite after changing the configuration. Shell environment variables and
+Vite's mode-specific dotenv files follow Vite's standard precedence rules.
+
+`VITE_` values are public and embedded at build time: never put an OpenAI key or
+other secret in frontend configuration. A configured local URL also applies to
+`npm run build`; remove/unset it or override it with the deployed URL when building
+for deployment. On a phone, loopback refers to the phone, not the development Mac.
+
 ## Capture a new menu
 
 **Capture a New Menu** immediately requests the phone's native rear camera via
@@ -29,7 +48,7 @@ existing photos intact, and **Close** on the preview screen discards unsent phot
 **Done** immediately returns to the existing **Processing your menu…** screen,
 even if photos are still being prepared. Once all photos are ready it posts
 repeated `images` file fields in browser-generated
-multipart form data to:
+multipart form data to the configured API URL, defaulting to:
 
 https://we8asbpr8l.execute-api.us-east-1.amazonaws.com/prod/menus
 

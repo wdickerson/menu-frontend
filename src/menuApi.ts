@@ -2,7 +2,8 @@ import type { RestaurantMenu } from './data/menus';
 import { isRestaurantMenu } from './menuLibrary';
 import { readPhotoDimensions } from './photoDimensions';
 
-export const MENU_API_URL = 'https://we8asbpr8l.execute-api.us-east-1.amazonaws.com/prod/menus';
+export const MENU_API_URL = import.meta.env.VITE_MENU_API_URL?.trim()
+  || 'https://we8asbpr8l.execute-api.us-east-1.amazonaws.com/prod/menus';
 export const MAX_IMAGES = 10;
 export const MAX_IMAGE_BYTES = 4_500_000;
 export const MAX_IMAGE_FILE_BYTES = 350_000;

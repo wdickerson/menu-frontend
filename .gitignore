@@ -3,3 +3,6 @@ dist
 menu_images
 .DS_Store
 *.local
+.env
+.env.*
+!.env.example
