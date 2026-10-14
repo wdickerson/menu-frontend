@@ -25,10 +25,21 @@ describe('menu API', () => {
     expect([...options.body.keys()]).toEqual(['images', 'images']);
   });
 
+  it('accepts five images and rejects a sixth before making a request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(menu)));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await postMenuImages(Array.from({ length: 5 }, image), signal())).toEqual(menu);
+    expect(fetchMock.mock.calls[0][1].body.getAll('images')).toHaveLength(5);
+    fetchMock.mockClear();
+    await expect(postMenuImages(Array.from({ length: 6 }, image), signal()))
+      .rejects.toThrow('Capture between 1 and 5 images');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid count, format, or combined size before making a request', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    for (const images of [[], Array.from({ length: 11 }, image), [new Blob(['png'], { type: 'image/png' })],
+    for (const images of [[], Array.from({ length: 6 }, image), [new Blob(['png'], { type: 'image/png' })],
       [new Blob([], { type: 'image/jpeg' })],
       [new Blob([new Uint8Array(MAX_IMAGE_BYTES + 1)], { type: 'image/jpeg' })]]) {
       await expect(postMenuImages(images, signal())).rejects.toThrow();

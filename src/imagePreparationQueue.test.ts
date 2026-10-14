@@ -88,8 +88,8 @@ describe('background image preparation queue', () => {
   it('enforces the photo count and releases resources on close', async () => {
     const prepare = vi.fn().mockResolvedValue(photo());
     const queue = new ImagePreparationQueue(prepare);
-    const images = Array.from({ length: 10 }, () => queue.add(photo()));
-    expect(() => queue.add(photo())).toThrow('at most 10');
+    const images = Array.from({ length: 5 }, () => queue.add(photo()));
+    expect(() => queue.add(photo())).toThrow('at most 5');
     queue.dispose();
     await images.at(-1)!.result;
     expect(prepare).not.toHaveBeenCalled();
