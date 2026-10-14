@@ -210,3 +210,7 @@ Add a "Menu Reader" title to the top of the home page. Keep it pretty small. Bel
 "Turn restaurant menus into skimmable audio with quick navigation gestures. Use your phone's camera to capture menus, or reload a recent menu."
 
 Reverse the left/right flick navigation direction. Feedback is that reversing the direction is more natural for screen reader users. Keep the current up/down direction.
+
+## Version 20
+
+Reverse the up/down flick navigation direction as well: flick down for the next section and up for the previous section. Feedback is that this is more natural for screen reader users. Keep the current left/right direction.

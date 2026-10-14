@@ -4,8 +4,7 @@ React/TypeScript single-page app. The main screen shows a scrollable menu with
 section headings and lists. Quick Nav provides spoken flick navigation.
 The home page has a compact **Menu Reader** title and a short introduction.
 In Quick Nav, flick **right** for the next item and **left** for the previous
-item. Section navigation is unchanged: flick **up** for the next section and
-**down** for the previous section.
+item. Flick **down** for the next section and **up** for the previous section.
 
 ## Browser navigation
 

@@ -412,7 +412,7 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
     const absY = Math.abs(deltaY);
 
     if (absY >= FLICK_THRESHOLD && absY > absX * 1.2) {
-      navigateGestureTarget('section', deltaY < 0 ? 1 : -1);
+      navigateGestureTarget('section', deltaY > 0 ? 1 : -1);
       return;
     }
 
