@@ -5,6 +5,7 @@ export type QueuedMenuImage = {
   id: string;
   file: Blob | null;
   blob: Blob | null;
+  singleImage: boolean;
   controller: AbortController;
   result: Promise<PreparationResult>;
 };
@@ -20,22 +21,24 @@ export class ImagePreparationQueue {
   add(file: Blob): QueuedMenuImage {
     if (this.disposed) throw new Error('This capture session has ended.');
     if (this.images.size >= MAX_IMAGES) throw new Error(`Capture at most ${MAX_IMAGES} images.`);
-    const image: QueuedMenuImage = { id: crypto.randomUUID(), file, blob: null,
+    const image: QueuedMenuImage = { id: crypto.randomUUID(), file, blob: null, singleImage: false,
       controller: new AbortController(), result: Promise.resolve({ error: new Error('Not prepared yet.') }) };
     this.images.set(image.id, image);
     this.schedule(image);
     return image;
   }
 
-  private schedule(image: QueuedMenuImage) {
+  private schedule(image: QueuedMenuImage, singleImage = false) {
     image.result = this.tail.then(async (): Promise<PreparationResult> => {
       try {
         image.controller.signal.throwIfAborted();
         if (!image.file) throw new Error('This photo is no longer available. Capture it again.');
-        const blob = await this.prepare(image.file, image.controller.signal);
+        const blob = await this.prepare(image.file, image.controller.signal, singleImage);
         image.controller.signal.throwIfAborted();
         image.blob = blob;
-        image.file = null; // Release the full-resolution photo once it is prepared.
+        image.singleImage = singleImage;
+        // Retain the original until removal/disposal: changing the final count
+        // must never re-encode an already downsampled upload JPEG.
         return { blob };
       } catch (error) {
         return { error: error instanceof Error ? error : new Error('This photo could not be prepared. Take another photo.') };
@@ -62,8 +65,12 @@ export class ImagePreparationQueue {
     try {
       const blobs: Blob[] = [];
       for (const image of images) {
-        // Retry a failed preparation using its original, but reuse successful JPEGs.
-        if (!image.blob && (await image.result).error) this.schedule(image);
+        const singleImage = images.length === 1;
+        // The final count determines the policy, not the count when captured.
+        // Reuse matching successful JPEGs, including on API retries.
+        const previous = await image.result;
+        signal.throwIfAborted();
+        if (previous.error || image.singleImage !== singleImage) this.schedule(image, singleImage);
         signal.throwIfAborted();
         const result = await image.result;
         signal.throwIfAborted();

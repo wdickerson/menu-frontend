@@ -1,19 +1,26 @@
 type AudioSession = { type: string };
-type ActiveThump = { oscillator: OscillatorNode; gain: GainNode };
 
-function createAudioContext() {
-  const Constructor = window.AudioContext ??
-    (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  return Constructor ? new Constructor() : null;
-}
-
-// Each Quick Nav mount owns its context, pending request, and optional session lease.
+// Each Quick Nav mount owns its media, pending request, and optional session lease.
 export function createBoundaryThump() {
-  let context: AudioContext | null = null;
-  let active: ActiveThump | null = null;
-  let request = 0;
+  let active: HTMLAudioElement | null = null;
   let disposed = false;
   let session: { value: AudioSession; previousType: string } | null = null;
+
+  function prepareAudio() {
+    let audio: HTMLAudioElement | null = null;
+    try {
+      audio = new Audio(`${import.meta.env.BASE_URL}assets/boundary-thump.wav`);
+      audio.preload = 'auto';
+      // Gain is baked into the recording: iOS may ignore media.volume changes.
+      audio.load();
+      return audio;
+    } catch {
+      if (audio) releaseAudio(audio);
+      return null;
+    }
+  }
+
+  let prepared = prepareAudio();
 
   function restoreSession() {
     const previous = session;
@@ -35,101 +42,65 @@ export function createBoundaryThump() {
     }
   }
 
-  function releaseNodes(thump: ActiveThump) {
-    thump.oscillator.onended = null;
-    try { thump.oscillator.stop(); } catch { /* Already stopped or not started. */ }
-    try { thump.oscillator.disconnect(); } catch { /* Context may be closed. */ }
-    try { thump.gain.disconnect(); } catch { /* Context may be closed. */ }
+  function releaseAudio(audio: HTMLAudioElement) {
+    audio.onended = null;
+    audio.onerror = null;
+    audio.onpause = null;
+    try { audio.pause(); } catch { /* Media may be unavailable. */ }
+    try {
+      // Removing the source aborts pending playback/loading, not just audible output.
+      audio.removeAttribute('src');
+      audio.load();
+    } catch { /* Cleanup must not interfere with speech. */ }
   }
 
   function cancel() {
-    request += 1;
     if (active) {
-      const thump = active;
+      const audio = active;
       active = null;
-      releaseNodes(thump);
+      releaseAudio(audio);
     }
     restoreSession();
   }
 
-  function onStateChange() {
-    // Never leave a scheduled sound waiting to replay after an interruption.
-    if (active && context?.state !== 'running') cancel();
+  function onVisibilityChange() {
+    if (document.hidden) cancel();
   }
+
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('pagehide', cancel);
 
   async function play() {
     cancel();
-    if (disposed) return;
-    const currentRequest = request;
+    if (disposed || document.hidden) return;
+    const audio = prepared ?? prepareAudio();
+    prepared = null;
+    if (!audio) return;
+    // Use a separate element for each request: old promises/events cannot stop
+    // or restore the session for a newer thump, even after an interruption.
+    active = audio;
     acquireSession();
-
+    const finish = () => { if (active === audio) cancel(); };
+    audio.onended = finish;
+    audio.onerror = finish;
+    audio.onpause = finish;
     try {
-      if (context?.state === 'closed') {
-        context.removeEventListener('statechange', onStateChange);
-        context = null;
-      }
-      if (!context) {
-        context = createAudioContext();
-        context?.addEventListener('statechange', onStateChange);
-      }
-      const audioContext = context;
-      if (!audioContext) {
-        restoreSession();
-        return;
-      }
-      // Safari can report the nonstandard 'interrupted' state. Resume in the
-      // gesture call stack, but schedule only after the context is running.
-      const state: string = audioContext.state;
-      if (state === 'suspended' || state === 'interrupted') await audioContext.resume();
-      if (disposed || currentRequest !== request || context !== audioContext) return;
-      if (audioContext.state !== 'running') {
-        restoreSession();
-        return;
-      }
-
-      const oscillator = audioContext.createOscillator();
-      // Track even partially constructed nodes so failures release them.
-      let gain: GainNode;
-      try { gain = audioContext.createGain(); } catch (error) {
-        oscillator.disconnect();
-        throw error;
-      }
-      const thump = { oscillator, gain };
-      active = thump;
-      const startTime = audioContext.currentTime;
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(280, startTime);
-      oscillator.frequency.exponentialRampToValueAtTime(220, startTime + 0.16);
-      gain.gain.setValueAtTime(0.0001, startTime);
-      gain.gain.exponentialRampToValueAtTime(0.6, startTime + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.18);
-      oscillator.connect(gain);
-      gain.connect(audioContext.destination);
-      oscillator.onended = () => {
-        if (active !== thump) return;
-        active = null;
-        releaseNodes(thump);
-        restoreSession();
-      };
-      oscillator.start(startTime);
-      oscillator.stop(startTime + 0.2);
+      // Invoke play() synchronously in the gesture; never wait for canplay/load.
+      await audio.play();
+      if (active !== audio) releaseAudio(audio);
     } catch {
-      // Audio is optional; failures must not break navigation or speech.
-      if (currentRequest === request) cancel();
+      // Blocked/aborted playback is optional; retry only on a fresh gesture.
+      finish();
     }
   }
 
   function dispose() {
     disposed = true;
     cancel();
-    const previous = context;
-    context = null;
-    if (previous) {
-      previous.removeEventListener('statechange', onStateChange);
-      try {
-        if (previous.state !== 'closed') void previous.close().catch(() => {});
-      } catch { /* Closing an unavailable context must not break cleanup. */ }
-    }
+    if (prepared) releaseAudio(prepared);
+    prepared = null;
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    window.removeEventListener('pagehide', cancel);
   }
 
   return { play, cancel, dispose };

@@ -70,15 +70,21 @@ https://we8asbpr8l.execute-api.us-east-1.amazonaws.com/prod/menus
 There are at most five photos and 4,500,000 combined image bytes. Each photo is
 resized to at most 1568 pixels in either dimension, preserving the original aspect
 ratio without cropping or upscaling, and compressed to at most
-350 KB (350,000 bytes), reducing JPEG quality and dimensions as needed. The same
-per-image limit is checked again before posting; oversized images are never sent.
+350 KB (350,000 bytes) for multi-photo submissions, reducing JPEG quality and
+dimensions as needed. When exactly one photo is submitted, its limit is instead
+900 KB (900,000 bytes), and its longest dimension is exactly 1568 pixels unless
+the original is smaller (never upscaled). Single-photo compression reduces JPEG
+quality only, never the fitted dimensions; if it cannot meet the byte limit, it
+reports an error rather than sending an oversized image. The final retained photo
+count selects the policy. The same per-image limit is checked again before posting.
 Remove images if the combined limit is reached. Submitting immediately returns
 to the main screen and displays **Processing your menu…** with
 a message that processing may take 20 seconds or longer. The previous menu is
 not replaced until processing succeeds. Failed uploads retain the photos in
 memory for **Retry loading menu**, without reopening the camera.
-Successful JPEGs are reused on retry; failed preparation can retry its original
-photo. The API's 35-second timeout starts only when the request is sent, not
+Successful JPEGs are reused on retry; originals remain available until the session
+is discarded so preparation can be retried or adjusted when the photo count changes.
+The API's 35-second timeout starts only when the request is sent, not
 while waiting for on-device preparation.
 
 **Cancel processing** cancels queued preparation and/or the pending browser request and returns to the
@@ -139,11 +145,17 @@ uses file uploads and mocked API responses, without paid API calls. Native
 camera launch, photo sharpness, Safari/Chrome format support, audible speech, and live deployment CORS
 still require testing on a device.
 
-Boundary feedback remains a synthesized Web Audio sine thump (300 → 180 Hz,
-peak gain 0.8, 200 ms). Pending/active thumps are cancelled before speech and
-on Quick Nav cleanup; interrupted audio is not queued for later replay. Where
-supported, the audio session temporarily uses `playback` and restores its prior
-type when the thump ends or is cancelled.
+Boundary feedback uses the bundled [original WAV](public/assets/boundary-thump.wav)
+(280 → 220 Hz sine sweep, peak amplitude 0.6, 200 ms), rather than on-device
+Web Audio synthesis. The gain envelope is baked into the recording for iOS,
+where media volume control may be ignored. The first clip is preloaded when
+Quick Nav mounts; media playback starts directly in the boundary gesture.
+Pending/active thumps are cancelled before speech, when the page is hidden or
+playback is interrupted, and on Quick Nav cleanup. No automatic replay is queued.
+Where supported, the audio session temporarily uses `playback` and restores its
+prior type when the thump ends or is cancelled. The dependency-free
+[generator](scripts/generate-boundary-thump.mjs) reproduces the committed recording;
+it is not used at runtime or required to build the app.
 
 Hardware validation order: **Android first; iPhone later**. On Android, verify
 audible feedback at both section/item boundaries, repeated boundary flicks,

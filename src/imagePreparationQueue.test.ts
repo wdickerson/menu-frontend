@@ -20,7 +20,7 @@ describe('background image preparation queue', () => {
     finishFirst(firstBlob);
     expect(await collected).toEqual([firstBlob, secondBlob]);
     expect(prepare).toHaveBeenCalledTimes(2);
-    expect(first.file).toBeNull();
+    expect(first.file).not.toBeNull();
   });
 
   it('reuses prepared JPEGs when an API request is retried', async () => {
@@ -29,7 +29,8 @@ describe('background image preparation queue', () => {
     queue.add(photo());
     const images = await queue.collect(signal());
     expect(await queue.collect(signal())).toEqual(images);
-    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(prepare.mock.calls[1][2]).toBe(true);
   });
 
   it('keeps failed originals for a preparation retry without repeating successes', async () => {
@@ -61,7 +62,7 @@ describe('background image preparation queue', () => {
     queue.add(photo('kept'));
     queue.remove(removed);
     expect(await queue.collect(signal())).toHaveLength(1);
-    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledTimes(2);
     expect(removed.controller.signal.aborted).toBe(true);
     expect(removed.file).toBeNull();
   });
@@ -94,5 +95,34 @@ describe('background image preparation queue', () => {
     await images.at(-1)!.result;
     expect(prepare).not.toHaveBeenCalled();
     expect(images.every((image) => image.controller.signal.aborted && image.file === null)).toBe(true);
+  });
+
+  it('uses the multi-image policy when another photo is added before submission', async () => {
+    const prepare = vi.fn().mockResolvedValue(photo());
+    const queue = new ImagePreparationQueue(prepare);
+    const first = queue.add(photo('first'));
+    await first.result;
+    queue.add(photo('second'));
+    expect(await queue.collect(signal())).toHaveLength(2);
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(prepare.mock.calls.every((call) => call[2] === false)).toBe(true);
+  });
+
+  it('reprepares the remaining original with the single-image policy after removal', async () => {
+    const original = photo('original');
+    const multiBlob = photo('multi JPEG');
+    const singleBlob = photo('single JPEG');
+    const prepare = vi.fn().mockResolvedValueOnce(multiBlob).mockResolvedValueOnce(multiBlob)
+      .mockResolvedValueOnce(singleBlob);
+    const queue = new ImagePreparationQueue(prepare);
+    queue.add(original);
+    const removed = queue.add(photo('second'));
+    await removed.result;
+    queue.remove(removed);
+    expect(await queue.collect(signal())).toEqual([singleBlob]);
+    expect(prepare.mock.calls[2]).toEqual([original, expect.any(AbortSignal), true]);
+    expect(await queue.collect(signal())).toEqual([singleBlob]);
+    expect(prepare).toHaveBeenCalledTimes(3);
+    queue.dispose();
   });
 });

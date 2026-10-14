@@ -7,6 +7,7 @@ export const MENU_API_URL = import.meta.env.VITE_MENU_API_URL?.trim()
 export const MAX_IMAGES = 5;
 export const MAX_IMAGE_BYTES = 4_500_000;
 export const MAX_IMAGE_FILE_BYTES = 350_000;
+export const MAX_SINGLE_IMAGE_BYTES = 900_000;
 
 const ERROR_MESSAGES: Record<string, string> = {
   no_menu_found: 'No menu was found. Take clearer photos of the menu and try again.',
@@ -27,8 +28,9 @@ export async function postMenuImages(images: Blob[], signal: AbortSignal): Promi
   if (images.some((image) => image.type !== 'image/jpeg' || image.size === 0)) {
     throw new Error('A captured image is invalid. Remove it and capture it again.');
   }
-  if (images.some((image) => image.size > MAX_IMAGE_FILE_BYTES)) {
-    throw new Error('Each image must be 350 KB or smaller. Remove the oversized image and capture it again.');
+  const maxFileBytes = images.length === 1 ? MAX_SINGLE_IMAGE_BYTES : MAX_IMAGE_FILE_BYTES;
+  if (images.some((image) => image.size > maxFileBytes)) {
+    throw new Error(`Each image must be ${maxFileBytes / 1000} KB or smaller. Remove the oversized image and capture it again.`);
   }
   if (images.reduce((total, image) => total + image.size, 0) > MAX_IMAGE_BYTES) {
     throw new Error('These photos are too large. Remove an image and try again.');
@@ -66,7 +68,7 @@ function fitImageDimensions(width: number, height: number) {
 
 type PreparationTiming = { decodeMs: number; drawMs: number; encodeMs: number; attempts: number; decoder: 'bitmap' | 'image' };
 
-export async function prepareMenuImage(file: Blob, signal?: AbortSignal): Promise<Blob> {
+export async function prepareMenuImage(file: Blob, signal?: AbortSignal, singleImage = false): Promise<Blob> {
   signal?.throwIfAborted();
   if (!file.size) throw new Error('This image is empty. Take another photo.');
   const started = performance.now();
@@ -107,7 +109,7 @@ export async function prepareMenuImage(file: Blob, signal?: AbortSignal): Promis
     timing.decodeMs = performance.now() - started;
     const decoded = bitmap ?? source!;
     return await compressMenuImage(decoded, bitmap?.width ?? source!.naturalWidth,
-      bitmap?.height ?? source!.naturalHeight, timing, signal);
+      bitmap?.height ?? source!.naturalHeight, timing, signal, singleImage);
   } finally {
     bitmap?.close();
     if (source) source.src = '';
@@ -123,7 +125,7 @@ export async function prepareMenuImage(file: Blob, signal?: AbortSignal): Promis
 }
 
 async function compressMenuImage(source: CanvasImageSource, width: number, height: number,
-  timing: PreparationTiming, signal?: AbortSignal): Promise<Blob> {
+  timing: PreparationTiming, signal?: AbortSignal, singleImage = false): Promise<Blob> {
   if (!width || !height) throw new Error('This image has invalid dimensions. Take another photo.');
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
@@ -131,6 +133,7 @@ async function compressMenuImage(source: CanvasImageSource, width: number, heigh
   // Browser decoding applies EXIF orientation. Fit the entire photo inside
   // 1568 by 1568 without cropping, stretching, or enlarging it.
   const resized = fitImageDimensions(width, height);
+  const maxFileBytes = singleImage ? MAX_SINGLE_IMAGE_BYTES : MAX_IMAGE_FILE_BYTES;
   let scale = 1;
   let quality = 0.88;
   let drawnWidth = 0;
@@ -162,9 +165,12 @@ async function compressMenuImage(source: CanvasImageSource, width: number, heigh
       timing.drawMs += performance.now() - drawStarted;
     }
     const image = await encode(quality);
-    if (image.size <= MAX_IMAGE_FILE_BYTES) return image;
-    if (quality > 0.65) quality -= 0.1;
+    if (image.size <= maxFileBytes) return image;
+    // Single-photo submissions keep their exact fitted resolution; only JPEG
+    // quality may fall. Never shrink them further to satisfy the byte limit.
+    if (singleImage) quality = Math.max(0.05, quality - 0.1);
+    else if (quality > 0.65) quality -= 0.1;
     else scale *= 0.8;
   }
-  throw new Error('This image could not be compressed to 350 KB. Try taking another photo.');
+  throw new Error(`This image could not be compressed to ${maxFileBytes / 1000} KB. Try taking another photo.`);
 }

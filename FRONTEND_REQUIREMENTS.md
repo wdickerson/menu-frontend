@@ -176,7 +176,9 @@ As soon as the user taps "Capture a New Menu", the phone's native camera view sh
 
 From the preview screen, the user has two options: "Add another image" or "Done". Tapping "Done" sends the POST and proceeds with the existing UX flow.
 
-Send images at a maximum of 350kb each. Also, ensure images are at no higher of a resolution than 1024 pixels in either dimension, maintaining the original aspect ratio.
+For submissions containing more than one image, send images at a maximum of 350 KB (350,000 bytes) each. Fit each image within 1568 pixels in either dimension, maintaining the original aspect ratio without upsampling; further dimension reductions are allowed to meet the byte limit.
+
+When submitting exactly one image, allow up to 900 KB (900,000 bytes). Downsample its longest dimension to exactly 1568 pixels if larger; never upsample smaller originals. Reduce JPEG quality, not the fitted dimensions, to meet the byte limit. If that is not possible, show a recoverable error rather than sending an oversized image. Select the policy using the final number of retained images; multi-image limits otherwise remain unchanged.
 
 ## Version 17
 

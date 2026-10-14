@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { prepareMenuImage, MAX_IMAGE_BYTES, MAX_IMAGE_FILE_BYTES, MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT,
+import { prepareMenuImage, MAX_IMAGE_BYTES, MAX_IMAGE_FILE_BYTES, MAX_SINGLE_IMAGE_BYTES, MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT,
   MENU_API_URL, postMenuImages } from './menuApi';
 
 const menu = { restaurantName: 'New Cafe', sections: [{ name: 'Lunch', items: ['Soup 8'] }] };
@@ -58,7 +58,7 @@ describe('menu API', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(menu)));
     vi.stubGlobal('fetch', fetchMock);
     const atLimit = new Blob([new Uint8Array(MAX_IMAGE_FILE_BYTES)], { type: 'image/jpeg' });
-    expect(await postMenuImages([atLimit], signal())).toEqual(menu);
+    expect(await postMenuImages([atLimit, image()], signal())).toEqual(menu);
     expect(fetchMock.mock.calls[0][1].body.get('images').size).toBe(350_000);
     fetchMock.mockClear();
     const oversized = new Blob([new Uint8Array(MAX_IMAGE_FILE_BYTES + 1)], { type: 'image/jpeg' });
@@ -72,6 +72,19 @@ describe('menu API', () => {
     vi.stubGlobal('fetch', fetchMock);
     await expect(postMenuImages([image()], signal())).rejects.toThrow('HTTP 502');
     await expect(postMenuImages([image()], signal())).rejects.toThrow('invalid menu');
+  });
+
+  it('allows exactly 900,000 bytes only for a single-image submission', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(menu)));
+    vi.stubGlobal('fetch', fetchMock);
+    const atLimit = new Blob([new Uint8Array(MAX_SINGLE_IMAGE_BYTES)], { type: 'image/jpeg' });
+    expect(await postMenuImages([atLimit], signal())).toEqual(menu);
+    expect(fetchMock.mock.calls[0][1].body.get('images').size).toBe(900_000);
+    fetchMock.mockClear();
+    const oversized = new Blob([new Uint8Array(MAX_SINGLE_IMAGE_BYTES + 1)], { type: 'image/jpeg' });
+    await expect(postMenuImages([oversized], signal())).rejects.toThrow('900 KB');
+    await expect(postMenuImages([atLimit, image()], signal())).rejects.toThrow('350 KB');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('propagates network errors and request cancellation', async () => {
@@ -135,6 +148,42 @@ describe('native photo JPEG preparation', () => {
     expect((await prepareMenuImage(image())).size).toBe(4);
     expect(toBlob).toHaveBeenCalledTimes(2);
     expect(drawImage).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([[6000, 4000], [4000, 6000], [6000, 6000], [1569, 1000], [1000, 1569],
+    [1568, 1568], [1567, 1200], [1200, 1567], [600, 400]])
+    ('keeps single photos at the exact fitted dimensions through quality retries: %i by %i', async (width, height) => {
+    mockPhoto(width, height);
+    const oversized = new Blob([new Uint8Array(MAX_SINGLE_IMAGE_BYTES + 1)], { type: 'image/jpeg' });
+    const atLimit = new Blob([new Uint8Array(MAX_SINGLE_IMAGE_BYTES)], { type: 'image/jpeg' });
+    const drawImage = vi.fn();
+    let calls = 0;
+    const qualities: number[] = [];
+    const toBlob = vi.fn((callback: BlobCallback, _type?: string, quality?: number) => {
+      qualities.push(quality!);
+      callback(++calls <= 6 ? oversized : atLimit);
+    });
+    const canvas = { width: 0, height: 0, getContext: () => ({ drawImage }), toBlob };
+    vi.stubGlobal('document', { createElement: () => canvas });
+    expect(await prepareMenuImage(image(), signal(), true)).toBe(atLimit);
+    const dimensions = expectedDimensions(width, height);
+    expect(canvas.width).toBe(dimensions.width);
+    expect(canvas.height).toBe(dimensions.height);
+    expect(drawImage).toHaveBeenCalledExactlyOnceWith(expect.anything(), 0, 0, dimensions.width, dimensions.height);
+    expect(qualities.at(-1)).toBeLessThan(qualities[0]);
+  });
+
+  it('rejects an uncompressible single photo without reducing its resolution', async () => {
+    mockPhoto(6000, 4000);
+    const oversized = new Blob([new Uint8Array(MAX_SINGLE_IMAGE_BYTES + 1)], { type: 'image/jpeg' });
+    const drawImage = vi.fn();
+    const toBlob = vi.fn((callback: BlobCallback) => callback(oversized));
+    const canvas = { width: 0, height: 0, getContext: () => ({ drawImage }), toBlob };
+    vi.stubGlobal('document', { createElement: () => canvas });
+    await expect(prepareMenuImage(image(), signal(), true)).rejects.toThrow('compressed to 900 KB');
+    expect(toBlob).toHaveBeenCalledTimes(12);
+    expect(drawImage).toHaveBeenCalledExactlyOnceWith(expect.anything(), 0, 0, 1568, 1045);
+    expect(canvas.width).toBe(1568);
   });
 
   it('returns a capture exactly at the 350 KB limit without additional compression', async () => {

@@ -1,28 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBoundaryThump } from './boundaryThump';
 
-function parameter() {
-  return { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() };
-}
-
-function mockContext(initialState = 'running') {
-  const oscillators: Array<ReturnType<typeof oscillator>> = [];
-  const gains: Array<ReturnType<typeof gain>> = [];
-  function oscillator() {
-    return { type: '', frequency: parameter(), connect: vi.fn(), disconnect: vi.fn(),
-      start: vi.fn(), stop: vi.fn(), onended: null as (() => void) | null };
-  }
-  function gain() {
-    return { gain: parameter(), connect: vi.fn(), disconnect: vi.fn() };
-  }
-  const context = Object.assign(new EventTarget(), {
-    state: initialState, currentTime: 10, destination: {},
-    createOscillator: vi.fn(() => { const node = oscillator(); oscillators.push(node); return node; }),
-    createGain: vi.fn(() => { const node = gain(); gains.push(node); return node; }),
-    resume: vi.fn(async () => { context.state = 'running'; }),
-    close: vi.fn(async () => { context.state = 'closed'; }),
-  });
-  return { context, oscillators, gains };
+function mockAudio(src: string) {
+  return {
+    src, preload: '', onended: null as (() => void) | null,
+    onerror: null as (() => void) | null, onpause: null as (() => void) | null,
+    play: vi.fn(() => Promise.resolve()), pause: vi.fn(), load: vi.fn(),
+    removeAttribute: vi.fn(),
+  };
 }
 
 function deferred() {
@@ -32,18 +17,28 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-describe('boundary thump', () => {
-  let audio: ReturnType<typeof mockContext>;
+describe('bundled boundary thump', () => {
+  let clips: Array<ReturnType<typeof mockAudio>>;
   let constructor: ReturnType<typeof vi.fn>;
   let session: { type: string };
+  let documentTarget: EventTarget & { hidden: boolean };
+  let windowTarget: EventTarget;
   let thump: ReturnType<typeof createBoundaryThump>;
 
   beforeEach(() => {
-    audio = mockContext();
-    constructor = vi.fn(function () { return audio.context; });
+    clips = [];
+    constructor = vi.fn(function (src: string) {
+      const audio = mockAudio(src);
+      clips.push(audio);
+      return audio;
+    });
     session = { type: 'auto' };
-    vi.stubGlobal('window', { AudioContext: constructor });
+    documentTarget = Object.assign(new EventTarget(), { hidden: false });
+    windowTarget = new EventTarget();
+    vi.stubGlobal('Audio', constructor);
     vi.stubGlobal('navigator', { audioSession: session });
+    vi.stubGlobal('document', documentTarget);
+    vi.stubGlobal('window', windowTarget);
     thump = createBoundaryThump();
   });
   afterEach(() => {
@@ -51,148 +46,123 @@ describe('boundary thump', () => {
     vi.unstubAllGlobals();
   });
 
-  it('synthesizes the requested sine sweep and releases nodes on completion', async () => {
-    await thump.play();
-    const node = audio.oscillators[0];
-    expect(node.type).toBe('sine');
-    expect(node.frequency.setValueAtTime).toHaveBeenCalledExactlyOnceWith(280, 10);
-    expect(node.frequency.exponentialRampToValueAtTime).toHaveBeenCalledExactlyOnceWith(220, 10.16);
-    expect(audio.gains[0].gain.setValueAtTime).toHaveBeenCalledExactlyOnceWith(0.0001, 10);
-    expect(audio.gains[0].gain.exponentialRampToValueAtTime.mock.calls).toEqual([
-      [0.6, 10.012], [0.0001, 10.18],
-    ]);
-    expect(node.start).toHaveBeenCalledExactlyOnceWith(10);
-    expect(node.stop).toHaveBeenCalledExactlyOnceWith(10.2);
+  it('preloads the base-path-safe asset without autoplay, then plays inside the gesture', async () => {
+    expect(clips[0].src).toBe(`${import.meta.env.BASE_URL}assets/boundary-thump.wav`);
+    expect(clips[0].preload).toBe('auto');
+    expect(clips[0].load).toHaveBeenCalledOnce();
+    expect(clips[0].play).not.toHaveBeenCalled();
+    expect(session.type).toBe('auto');
+    const playing = thump.play();
+    // This assertion deliberately precedes await: iOS requires gesture activation.
+    expect(clips[0].play).toHaveBeenCalledOnce();
+    expect(constructor).toHaveBeenCalledOnce();
     expect(session.type).toBe('playback');
-    node.onended?.();
-    expect(node.disconnect).toHaveBeenCalledOnce();
-    expect(audio.gains[0].disconnect).toHaveBeenCalledOnce();
+    await playing;
+    clips[0].onended?.();
+    expect(clips[0].pause).toHaveBeenCalledOnce();
+    expect(clips[0].removeAttribute).toHaveBeenCalledWith('src');
+    expect(clips[0].load).toHaveBeenCalledTimes(2);
     expect(session.type).toBe('auto');
   });
 
-  it.each(['suspended', 'interrupted'])('awaits %s recovery, resuming inside the gesture', async (state) => {
-    audio.context.state = state;
-    const recovery = deferred();
-    audio.context.resume.mockReturnValue(recovery.promise);
-    const playing = thump.play();
-    expect(audio.context.resume).toHaveBeenCalledOnce();
-    expect(audio.context.createOscillator).not.toHaveBeenCalled();
-    audio.context.state = 'running';
-    recovery.resolve();
-    await playing;
-    expect(audio.context.createOscillator).toHaveBeenCalledOnce();
-  });
-
-  it.each(['cancel', 'dispose'] as const)('does not play after delayed recovery and %s', async (action) => {
-    audio.context.state = 'suspended';
-    const recovery = deferred();
-    audio.context.resume.mockReturnValue(recovery.promise);
+  it.each(['cancel', 'dispose'] as const)('aborts pending playback on %s and ignores late fulfillment', async (action) => {
+    const playback = deferred();
+    clips[0].play.mockReturnValue(playback.promise);
     const playing = thump.play();
     thump[action]();
+    expect(clips[0].pause).toHaveBeenCalledOnce();
+    expect(clips[0].removeAttribute).toHaveBeenCalledWith('src');
     expect(session.type).toBe('auto');
-    audio.context.state = 'running';
-    recovery.resolve();
+    playback.resolve();
     await playing;
-    expect(audio.context.createOscillator).not.toHaveBeenCalled();
-  });
-
-  it('supersedes pending recovery without stale playback or session restoration', async () => {
-    audio.context.state = 'suspended';
-    const recovery = deferred();
-    audio.context.resume.mockReturnValueOnce(recovery.promise);
-    const oldPlaying = thump.play();
-    await thump.play();
-    recovery.resolve();
-    await oldPlaying;
-    expect(audio.context.createOscillator).toHaveBeenCalledOnce();
-    expect(session.type).toBe('playback');
-  });
-
-  it('ignores an old recovery rejection while a newer thump plays', async () => {
-    audio.context.state = 'suspended';
-    const recovery = deferred();
-    audio.context.resume.mockReturnValueOnce(recovery.promise);
-    const oldPlaying = thump.play();
-    await thump.play();
-    recovery.reject(new Error('Interrupted'));
-    await oldPlaying;
-    expect(session.type).toBe('playback');
-    expect(audio.oscillators[0].disconnect).not.toHaveBeenCalled();
-  });
-
-  it('stops an earlier thump and ignores its stale completion', async () => {
-    await thump.play();
-    const oldEnded = audio.oscillators[0].onended;
-    await thump.play();
-    expect(audio.oscillators[0].stop).toHaveBeenLastCalledWith();
-    expect(audio.oscillators[0].disconnect).toHaveBeenCalledOnce();
-    oldEnded?.();
-    expect(session.type).toBe('playback');
-    thump.cancel();
-    expect(audio.oscillators[1].disconnect).toHaveBeenCalledOnce();
+    expect(clips[0].play).toHaveBeenCalledOnce();
+    expect(clips[0].pause).toHaveBeenCalledTimes(2);
     expect(session.type).toBe('auto');
   });
 
-  it.each(['suspended', 'interrupted', 'closed'])('removes scheduled playback when context becomes %s', async (state) => {
-    await thump.play();
-    audio.context.state = state;
-    audio.context.dispatchEvent(new Event('statechange'));
-    expect(audio.oscillators[0].stop).toHaveBeenLastCalledWith();
-    expect(audio.oscillators[0].disconnect).toHaveBeenCalledOnce();
-    expect(session.type).toBe('auto');
-  });
-
-  it('recreates a closed context on the next gesture', async () => {
-    await thump.play();
-    audio.context.state = 'closed';
-    const replacement = mockContext();
-    constructor.mockImplementationOnce(function () { return replacement.context; });
+  it.each(['resolve', 'reject'] as const)('ignores stale playback %s and old events during a newer thump', async (result) => {
+    const playback = deferred();
+    clips[0].play.mockReturnValue(playback.promise);
+    const oldPlaying = thump.play();
+    const oldEnded = clips[0].onended;
+    const oldError = clips[0].onerror;
+    const oldPause = clips[0].onpause;
     await thump.play();
     expect(constructor).toHaveBeenCalledTimes(2);
-    expect(audio.context.resume).not.toHaveBeenCalled();
-    expect(replacement.context.createOscillator).toHaveBeenCalledOnce();
+    expect(clips[0].pause).toHaveBeenCalledOnce();
+    if (result === 'resolve') playback.resolve();
+    else playback.reject(new Error('Aborted'));
+    await oldPlaying;
+    oldEnded?.();
+    oldError?.();
+    oldPause?.();
+    expect(clips[1].play).toHaveBeenCalledOnce();
+    expect(clips[1].pause).not.toHaveBeenCalled();
+    expect(session.type).toBe('playback');
   });
 
-  it.each(['reject', 'throw', 'still suspended'])('safely skips failed recovery: %s', async (failure) => {
-    audio.context.state = 'suspended';
-    audio.context.resume.mockImplementationOnce(() => {
+  it('uses a fresh clip for each thump, including after natural completion', async () => {
+    await thump.play();
+    clips[0].onended?.();
+    await thump.play();
+    expect(clips[0].play).toHaveBeenCalledOnce();
+    expect(clips[1].play).toHaveBeenCalledOnce();
+    thump.cancel();
+    expect(clips[1].pause).toHaveBeenCalledOnce();
+    expect(session.type).toBe('auto');
+  });
+
+  it.each(['reject', 'throw'])('safely handles playback %s and retries only on the next gesture', async (failure) => {
+    clips[0].play.mockImplementationOnce(() => {
       if (failure === 'throw') throw new Error('Blocked');
-      return failure === 'reject' ? Promise.reject(new Error('Blocked')) : Promise.resolve();
+      return Promise.reject(new Error('Blocked'));
     });
     await expect(thump.play()).resolves.toBeUndefined();
-    expect(audio.context.createOscillator).not.toHaveBeenCalled();
+    expect(clips[0].pause).toHaveBeenCalledOnce();
     expect(session.type).toBe('auto');
     await thump.play();
-    expect(audio.context.createOscillator).toHaveBeenCalledOnce();
+    expect(clips[1].play).toHaveBeenCalledOnce();
   });
 
-  it('handles unavailable and throwing constructors, including WebKit fallback', async () => {
-    vi.stubGlobal('window', {});
+  it.each(['onerror', 'onpause'] as const)('cancels on %s without resuming automatically', async (event) => {
     await thump.play();
+    clips[0][event]?.();
+    expect(clips[0].pause).toHaveBeenCalledOnce();
     expect(session.type).toBe('auto');
-    constructor.mockImplementationOnce(() => { throw new Error('Unavailable'); });
-    vi.stubGlobal('window', { webkitAudioContext: constructor });
+    expect(clips[0].play).toHaveBeenCalledOnce();
     await thump.play();
-    expect(session.type).toBe('auto');
-    await thump.play();
-    expect(audio.context.createOscillator).toHaveBeenCalledOnce();
+    expect(clips[1].play).toHaveBeenCalledOnce();
   });
 
-  it.each(['createGain', 'start'] as const)('releases partially created nodes on %s failure', async (failure) => {
-    if (failure === 'createGain') {
-      audio.context.createGain.mockImplementationOnce(() => { throw new Error('Closed'); });
-    } else {
-      audio.context.createOscillator.mockImplementationOnce(() => {
-        const node = { type: '', frequency: parameter(), connect: vi.fn(), disconnect: vi.fn(),
-          start: vi.fn(() => { throw new Error('Closed'); }), stop: vi.fn(), onended: null };
-        audio.oscillators.push(node);
-        return node;
-      });
-    }
-    await expect(thump.play()).resolves.toBeUndefined();
-    expect(audio.oscillators[0].disconnect).toHaveBeenCalledOnce();
-    if (failure === 'start') expect(audio.gains[0].disconnect).toHaveBeenCalledOnce();
+  it.each(['visibilitychange', 'pagehide'])('cancels pending playback on %s without replay on return', async (event) => {
+    const playback = deferred();
+    clips[0].play.mockReturnValue(playback.promise);
+    const playing = thump.play();
+    if (event === 'visibilitychange') {
+      documentTarget.hidden = true;
+      documentTarget.dispatchEvent(new Event(event));
+    } else windowTarget.dispatchEvent(new Event(event));
+    expect(clips[0].pause).toHaveBeenCalledOnce();
     expect(session.type).toBe('auto');
+    documentTarget.hidden = false;
+    documentTarget.dispatchEvent(new Event('visibilitychange'));
+    playback.resolve();
+    await playing;
+    expect(constructor).toHaveBeenCalledOnce();
+    expect(clips[0].play).toHaveBeenCalledOnce();
+    await thump.play();
+    expect(clips[1].play).toHaveBeenCalledOnce();
+  });
+
+  it('does not start media while hidden or after disposal', async () => {
+    documentTarget.hidden = true;
+    await thump.play();
+    expect(clips[0].play).not.toHaveBeenCalled();
+    thump.dispose();
+    documentTarget.hidden = false;
+    await thump.play();
+    expect(constructor).toHaveBeenCalledOnce();
+    expect(clips[0].play).not.toHaveBeenCalled();
   });
 
   it.each(['missing', 'getter throws', 'setter throws'])('feature-detects audioSession safely: %s', async (kind) => {
@@ -206,32 +176,44 @@ describe('boundary thump', () => {
     });
     vi.stubGlobal('navigator', browserNavigator);
     await expect(thump.play()).resolves.toBeUndefined();
-    expect(audio.oscillators[0].start).toHaveBeenCalledOnce();
+    expect(clips[0].play).toHaveBeenCalledOnce();
     expect(() => thump.dispose()).not.toThrow();
   });
 
-  it.each(['reject', 'throw'])('restores the exact session value despite close %s', async (failure) => {
+  it('restores the exact session value even when media cleanup throws', async () => {
     session.type = 'ambient';
     await thump.play();
-    audio.context.close.mockImplementationOnce(() => {
-      if (failure === 'throw') throw new Error('Closed');
-      return Promise.reject(new Error('Closed'));
-    });
+    clips[0].pause.mockImplementationOnce(() => { throw new Error('Unavailable'); });
+    clips[0].load.mockImplementationOnce(() => { throw new Error('Unavailable'); });
     expect(() => thump.dispose()).not.toThrow();
-    await Promise.resolve();
     expect(session.type).toBe('ambient');
-    await thump.play();
-    expect(constructor).toHaveBeenCalledOnce();
-    expect(audio.context.createOscillator).toHaveBeenCalledOnce();
   });
 
-  it('supports Strict Mode setup-cleanup-setup with independent owners', async () => {
+  it('handles unavailable/throwing media APIs without breaking navigation', async () => {
     thump.dispose();
-    expect(constructor).not.toHaveBeenCalled();
+    vi.stubGlobal('Audio', undefined);
+    thump = createBoundaryThump();
+    await expect(thump.play()).resolves.toBeUndefined();
+    constructor.mockImplementationOnce(() => { throw new Error('Unavailable'); });
+    vi.stubGlobal('Audio', constructor);
+    await expect(thump.play()).resolves.toBeUndefined();
+    await thump.play();
+    expect(clips[1].play).toHaveBeenCalledOnce();
+  });
+
+  it('releases unused preloads and all listeners in Strict Mode setup-cleanup-setup', async () => {
+    const removeDocumentListener = vi.spyOn(documentTarget, 'removeEventListener');
+    const removeWindowListener = vi.spyOn(windowTarget, 'removeEventListener');
+    thump.dispose();
+    expect(clips[0].pause).toHaveBeenCalledOnce();
+    expect(clips[0].removeAttribute).toHaveBeenCalledWith('src');
+    expect(removeDocumentListener).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+    expect(removeWindowListener).toHaveBeenCalledWith('pagehide', expect.any(Function));
     thump = createBoundaryThump();
     await thump.play();
+    expect(clips[1].play).toHaveBeenCalledOnce();
     thump.dispose();
-    expect(audio.context.close).toHaveBeenCalledOnce();
+    expect(clips[1].pause).toHaveBeenCalledOnce();
     expect(session.type).toBe('auto');
   });
 });
