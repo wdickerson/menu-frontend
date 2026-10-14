@@ -5,6 +5,7 @@ import CameraCapture from './CameraCapture';
 import { postMenuImages } from './menuApi';
 import { ImagePreparationQueue } from './imagePreparationQueue';
 import { installSpeechWarmup } from './speechWarmup';
+import { createBoundaryThump } from './boundaryThump';
 import { createAppNavigation, type AppRoute } from './appNavigation';
 import { addRecentMenu, deleteRecentMenu, getMenuChoices, getSelectedMenu, loadMenuLibrary,
   renameRecentMenu, saveMenuLibrary,
@@ -12,9 +13,6 @@ import { addRecentMenu, deleteRecentMenu, getMenuChoices, getSelectedMenu, loadM
 
 type MenuSection = RestaurantMenu['sections'][number];
 type MenuItem = MenuSection['items'][number];
-type BrowserWindowWithWebkitAudio = Window & {
-  webkitAudioContext?: typeof AudioContext;
-};
 type NavigationTarget = 'section' | 'item';
 type BoundarySlots = Record<NavigationTarget, -1 | 1 | null>;
 type ReadSlots = Record<NavigationTarget, boolean>;
@@ -105,17 +103,6 @@ function speak(text: string, rate: SpeechRate) {
   window.speechSynthesis.speak(utterance);
 }
 
-function createAudioContext() {
-  const AudioContextConstructor =
-    window.AudioContext ?? (window as BrowserWindowWithWebkitAudio).webkitAudioContext;
-
-  if (!AudioContextConstructor) {
-    return null;
-  }
-
-  return new AudioContextConstructor();
-}
-
 type QuickNavProps = {
   menu: RestaurantMenu;
   speechRate: SpeechRate;
@@ -134,11 +121,13 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
   const lastUtteranceRef = useRef(menu.sections[0].name);
   const lastUtteranceTargetRef = useRef<NavigationTarget | null>('section');
   const hasSpokenRef = useRef(false);
-  const audioContextRef = useRef<AudioContext | null>(null);
+  const boundaryThumpRef = useRef<ReturnType<typeof createBoundaryThump> | null>(null);
   const boundarySlotsRef = useRef<BoundarySlots>({ section: null, item: null });
   const readSlotsRef = useRef<ReadSlots>({ section: false, item: false });
 
   useEffect(() => {
+    const boundaryThump = createBoundaryThump();
+    boundaryThumpRef.current = boundaryThump;
     gestureAreaRef.current?.focus();
     const previousOverflow = document.documentElement.style.overflow;
     document.documentElement.style.overflow = 'hidden';
@@ -151,46 +140,20 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
 
       // Strict Mode's initial cleanup must not cancel the app's warm-up.
       if (hasSpokenRef.current) window.speechSynthesis?.cancel();
-      void audioContextRef.current?.close();
+      boundaryThump.dispose();
+      boundaryThumpRef.current = null;
     };
   }, []);
 
   function speakQuickNav(text: string, rate: SpeechRate) {
+    boundaryThumpRef.current?.cancel();
     hasSpokenRef.current = true;
     speak(text, rate);
   }
 
   function playBoundaryThump() {
     window.speechSynthesis?.cancel();
-
-    const audioContext = audioContextRef.current ?? createAudioContext();
-
-    if (!audioContext) {
-      return;
-    }
-
-    audioContextRef.current = audioContext;
-
-    if (audioContext.state === 'suspended') {
-      void audioContext.resume();
-    }
-
-    const startTime = audioContext.currentTime;
-    const oscillator = audioContext.createOscillator();
-    const gain = audioContext.createGain();
-
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(120, startTime);
-    oscillator.frequency.exponentialRampToValueAtTime(72, startTime + 0.16);
-
-    gain.gain.setValueAtTime(0.0001, startTime);
-    gain.gain.exponentialRampToValueAtTime(5.0, startTime + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.18);
-
-    oscillator.connect(gain);
-    gain.connect(audioContext.destination);
-    oscillator.start(startTime);
-    oscillator.stop(startTime + 0.2);
+    void boundaryThumpRef.current?.play();
   }
 
   function speakMenuText(text: string, target: NavigationTarget) {

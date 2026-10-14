@@ -138,3 +138,17 @@ background queue ordering/removal/cancellation/retry. Browser verification
 uses file uploads and mocked API responses, without paid API calls. Native
 camera launch, photo sharpness, Safari/Chrome format support, audible speech, and live deployment CORS
 still require testing on a device.
+
+Boundary feedback remains a synthesized Web Audio sine thump (300 → 180 Hz,
+peak gain 0.8, 200 ms). Pending/active thumps are cancelled before speech and
+on Quick Nav cleanup; interrupted audio is not queued for later replay. Where
+supported, the audio session temporarily uses `playback` and restores its prior
+type when the thump ends or is cancelled.
+
+Hardware validation order: **Android first; iPhone later**. On Android, verify
+audible feedback at both section/item boundaries, repeated boundary flicks,
+reverse flicks reading the endpoint, and speech/repeat/speed gestures without
+overlapping or delayed thumps. Check leaving Quick Nav during feedback and
+background/foreground or audio interruption recovery: only a fresh boundary
+gesture should produce feedback. Repeat these checks on iPhone afterward.
+Mocked tests verify scheduling and cleanup, not audibility or device routing.
