@@ -214,3 +214,16 @@ Reverse the left/right flick navigation direction. Feedback is that reversing th
 ## Version 20
 
 Reverse the up/down flick navigation direction as well: flick down for the next section and up for the previous section. Feedback is that this is more natural for screen reader users. Keep the current left/right direction.
+
+## Version 21
+
+Update UI to be a lighter theme.
+Dark text on light background.
+Primary actions buttons are green.
+Secondary action buttons are grey.
+Danger action buttons are red (ie, delete).
+
+Ensure best-practices are followed to make the website work well with screen readers.
+
+Place the captured date just below the restaurant name on the Recent Menu page, not below the buttons.
+

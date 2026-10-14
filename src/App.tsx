@@ -498,7 +498,7 @@ function MenuPage({ menu, onCaptureMenu, onSelectRestaurant, onEnterQuickNav, fo
           <h1>Menu Reader</h1>
           <p>Turn restaurant menus into skimmable audio with quick navigation gestures. Use your phone's camera to capture menus, or reload a recent menu.</p>
         </header>
-        <button className="menu-button" type="button" ref={captureButtonRef} disabled={processing} onClick={onCaptureMenu}>
+        <button className="menu-button primary-button" type="button" ref={captureButtonRef} disabled={processing} onClick={onCaptureMenu}>
           Capture a New Menu
         </button>
         <button className="menu-button" type="button" ref={loadButtonRef} disabled={processing} onClick={onSelectRestaurant}>
@@ -520,7 +520,7 @@ function MenuPage({ menu, onCaptureMenu, onSelectRestaurant, onEnterQuickNav, fo
           <div ref={processingErrorRef} role="alert" tabIndex={-1}><p>{processingError}</p></div>
           <p>{menu && 'Your previous menu is still available. '}You can retry using the same photos or capture a new menu.</p>
           <div className="processing-error-actions">
-            <button className="menu-button" type="button" onClick={onRetryProcessing}>Retry loading menu</button>
+            <button className="menu-button primary-button" type="button" onClick={onRetryProcessing}>Retry loading menu</button>
             <button className="menu-button" type="button" onClick={onDismissProcessingError}>Dismiss</button>
           </div>
         </section>}
@@ -576,7 +576,7 @@ function MenuManagementDialog({ action, onClose, onConfirm }: {
       </div>
       <div className="management-actions">
         <button className="menu-button" type="button" autoFocus={!renaming} onClick={onClose}>Cancel</button>
-        <button className={`menu-button${renaming ? '' : ' destructive-button'}`} type="submit"
+        <button className={`menu-button ${renaming ? 'primary-button' : 'destructive-button'}`} type="submit"
           disabled={renaming && !name.trim()}>{renaming ? 'Save' : 'Delete'}</button>
       </div>
     </form>
@@ -611,7 +611,7 @@ function RestaurantSelection({ library, onSelect, onClose, onRename, onDelete, s
       aria-labelledby="selection-title"
     >
       <section className="reader-panel selection-panel">
-        <p className="eyebrow">Version 19</p>
+        <p className="eyebrow">Version 21</p>
         <h1 id="selection-title" ref={headingRef} tabIndex={-1}>Recent Menus</h1>
         <p className="selection-note">Load, rename, or delete a saved menu.</p>
         {storageWarning && <p className="storage-warning" role="alert">{storageWarning}</p>}
@@ -620,8 +620,11 @@ function RestaurantSelection({ library, onSelect, onClose, onRename, onDelete, s
           {getMenuChoices(library).map(({ id, menu, capturedAt }) => (
             <article className="restaurant-card" key={id} aria-labelledby={`restaurant-${id}`}>
               <h2 id={`restaurant-${id}`}>{menu.restaurantName}</h2>
+              {id.startsWith('captured-') && <time className="recent-date" dateTime={capturedAt}>
+                Captured {new Date(capturedAt).toLocaleString()}
+              </time>}
               <div className="restaurant-card-actions">
-                <button type="button" aria-label={`Load ${menu.restaurantName}`} onClick={() => onSelect(id)}>Load</button>
+                <button className="primary-button" type="button" aria-label={`Load ${menu.restaurantName}`} onClick={() => onSelect(id)}>Load</button>
                 {(['rename', 'delete'] as const).map((kind) => <button key={kind} type="button"
                   aria-label={`${kind === 'rename' ? 'Rename' : 'Delete'} ${menu.restaurantName}`}
                   className={kind === 'delete' ? 'destructive-button' : undefined}
@@ -630,9 +633,6 @@ function RestaurantSelection({ library, onSelect, onClose, onRename, onDelete, s
                     onAction({ id, name: menu.restaurantName, kind });
                   }}>{kind === 'rename' ? 'Rename' : 'Delete'}</button>)}
               </div>
-              {id.startsWith('captured-') && <span className="recent-date">
-                Captured {new Date(capturedAt).toLocaleString()}
-              </span>}
             </article>
           ))}
           <button type="button" onClick={onClose}>Cancel</button>

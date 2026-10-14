@@ -127,15 +127,17 @@ export default function CameraCapture({ inputRef, onClose, onSubmit, expandedIma
         onChange={acceptImage} />
       <div className="menu-content capture-content">
         <button className="capture-close" type="button" aria-label="Close image capture" onClick={onClose}>Close</button>
-        <h1 id="capture-title">Preview your menu</h1>
-        <p>Tap an image to check that the text is legible. Add menu pages in reading order.</p>
+        <h1 id="capture-title">Capture menu images</h1>
+        <p>Tap an image for a larger preview. Tap Submit when all images are captured.</p>
         {error && <p className="camera-message" role="alert">{error}</p>}
         {images.map((image, index) => image.error && <p key={image.id} className="camera-message" role="alert">
           Image {index + 1}: {image.error} Remove this image and take another photo, or select Done to retry.
         </p>)}
-        <p className="camera-status" role="status">
-          {`${images.length} of ${MAX_IMAGES} images captured.`}
-        </p>
+        <div role="status">
+          {images.length > 0 && <p className="camera-status">
+            {`${images.length} ${images.length === 1 ? 'image' : 'images'} captured`}
+          </p>}
+        </div>
         {images.length > 0 && <ol className="capture-previews" aria-label="Captured menu images">
           {images.map((image, index) => <li key={image.id}>
             <button className="capture-thumbnail" type="button" aria-label={`Expand image ${index + 1}`}
@@ -149,13 +151,13 @@ export default function CameraCapture({ inputRef, onClose, onSubmit, expandedIma
         </ol>}
         <div className="camera-actions">
           <button ref={addButtonRef} className="menu-button" type="button" onClick={openCamera}
-            disabled={images.length >= MAX_IMAGES}>Add another image</button>
-          <button className="menu-button" type="button" disabled={!images.length}
+            disabled={images.length >= MAX_IMAGES}>Add another image +</button>
+          <button className="menu-button primary-button" type="button" disabled={!images.length}
             onClick={() => {
               if (submittedRef.current || !images.length || !queueRef.current) return;
               submittedRef.current = true;
               onSubmit(queueRef.current);
-            }}>Done</button>
+            }}>Submit</button>
         </div>
       </div>
     </main>
