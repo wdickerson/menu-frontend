@@ -148,14 +148,21 @@ still require testing on a device.
 Boundary feedback uses the bundled [original WAV](public/assets/boundary-thump.wav)
 (280 → 220 Hz sine sweep, peak amplitude 0.6, 200 ms), rather than on-device
 Web Audio synthesis. The gain envelope is baked into the recording for iOS,
-where media volume control may be ignored. The first clip is preloaded when
-Quick Nav mounts; media playback starts directly in the boundary gesture.
+where media volume control may be ignored. One preloaded audio element is reused
+throughout Quick Nav, restarting from zero directly in each boundary gesture.
 Pending/active thumps are cancelled before speech, when the page is hidden or
 playback is interrupted, and on Quick Nav cleanup. No automatic replay is queued.
-Where supported, the audio session temporarily uses `playback` and restores its
-prior type when the thump ends or is cancelled. The dependency-free
+Where supported, the first thump selects `playback` for the rest of Quick Nav and
+restores the prior type on exit, avoiding repeated session switching with speech.
+The source is unloaded only on exit (or reloaded after an actual media error).
+The dependency-free
 [generator](scripts/generate-boundary-thump.mjs) reproduces the committed recording;
 it is not used at runtime or required to build the app.
+
+This is a best-effort Safari mitigation, not a confirmed device fix:
+[WebKit recommends element reuse](https://webkit.org/blog/7734/auto-play-policy-changes-for-macos/)
+(macOS guidance), [`load()` aborts media operations](https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/load),
+and [iOS speech ducking has been reported](https://bugs.webkit.org/show_bug.cgi?id=278598).
 
 Hardware validation order: **Android first; iPhone later**. On Android, verify
 audible feedback at both section/item boundaries, repeated boundary flicks,

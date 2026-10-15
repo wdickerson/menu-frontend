@@ -1,26 +1,27 @@
 type AudioSession = { type: string };
 
-// Each Quick Nav mount owns its media, pending request, and optional session lease.
+// Reuse one media element/session: avoid rebuilding Safari's audio pipeline per cue.
 export function createBoundaryThump() {
-  let active: HTMLAudioElement | null = null;
+  let audio: HTMLAudioElement | null = null;
+  let request = 0;
   let disposed = false;
   let session: { value: AudioSession; previousType: string } | null = null;
 
   function prepareAudio() {
-    let audio: HTMLAudioElement | null = null;
     try {
-      audio = new Audio(`${import.meta.env.BASE_URL}assets/boundary-thump.wav`);
-      audio.preload = 'auto';
-      // Gain is baked into the recording: iOS may ignore media.volume changes.
-      audio.load();
-      return audio;
+      const clip = new Audio(`${import.meta.env.BASE_URL}assets/boundary-thump.wav`);
+      clip.preload = 'auto';
+      // Media events are queued; ignore old events if a newer cue is playing.
+      clip.onended = () => { if (clip.ended) cancel(); };
+      clip.onerror = () => { if (clip.error) cancel(); };
+      clip.onpause = () => { if (clip.paused && !clip.ended) cancel(); };
+      return clip;
     } catch {
-      if (audio) releaseAudio(audio);
       return null;
     }
   }
 
-  let prepared = prepareAudio();
+  audio = prepareAudio();
 
   function restoreSession() {
     const previous = session;
@@ -31,6 +32,7 @@ export function createBoundaryThump() {
   }
 
   function acquireSession() {
+    if (session) return;
     try {
       const value = (navigator as Navigator & { audioSession?: AudioSession }).audioSession;
       if (value && 'type' in value) {
@@ -42,25 +44,10 @@ export function createBoundaryThump() {
     }
   }
 
-  function releaseAudio(audio: HTMLAudioElement) {
-    audio.onended = null;
-    audio.onerror = null;
-    audio.onpause = null;
-    try { audio.pause(); } catch { /* Media may be unavailable. */ }
-    try {
-      // Removing the source aborts pending playback/loading, not just audible output.
-      audio.removeAttribute('src');
-      audio.load();
-    } catch { /* Cleanup must not interfere with speech. */ }
-  }
-
   function cancel() {
-    if (active) {
-      const audio = active;
-      active = null;
-      releaseAudio(audio);
-    }
-    restoreSession();
+    request += 1;
+    // pause() aborts pending play promises; keep the source and decoded clip.
+    try { audio?.pause(); } catch { /* Media is optional. */ }
   }
 
   function onVisibilityChange() {
@@ -73,32 +60,30 @@ export function createBoundaryThump() {
   async function play() {
     cancel();
     if (disposed || document.hidden) return;
-    const audio = prepared ?? prepareAudio();
-    prepared = null;
+    audio ??= prepareAudio();
     if (!audio) return;
-    // Use a separate element for each request: old promises/events cannot stop
-    // or restore the session for a newer thump, even after an interruption.
-    active = audio;
+    const currentRequest = request;
+    // Hold this mode across speech and cues; restore only when Quick Nav exits.
     acquireSession();
-    const finish = () => { if (active === audio) cancel(); };
-    audio.onended = finish;
-    audio.onerror = finish;
-    audio.onpause = finish;
     try {
-      // Invoke play() synchronously in the gesture; never wait for canplay/load.
+      if (audio.error) audio.load(); // Retry a real media error on a fresh gesture.
+      audio.currentTime = 0;
+      // Invoke play() synchronously in the gesture, not a load callback or timer.
       await audio.play();
-      if (active !== audio) releaseAudio(audio);
     } catch {
-      // Blocked/aborted playback is optional; retry only on a fresh gesture.
-      finish();
+      if (currentRequest === request) cancel();
     }
   }
 
   function dispose() {
     disposed = true;
     cancel();
-    if (prepared) releaseAudio(prepared);
-    prepared = null;
+    restoreSession();
+    if (audio) {
+      audio.onended = audio.onerror = audio.onpause = null;
+      try { audio.removeAttribute('src'); audio.load(); } catch { /* Optional media. */ }
+      audio = null;
+    }
     document.removeEventListener('visibilitychange', onVisibilityChange);
     window.removeEventListener('pagehide', cancel);
   }
