@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type TouchEvent } from 'react';
 import { flushSync } from 'react-dom';
+import { version } from '../package.json';
 import type { RestaurantMenu } from './data/menus';
 import CameraCapture from './CameraCapture';
 import { postMenuImages } from './menuApi';
@@ -606,46 +607,45 @@ function RestaurantSelection({ library, onSelect, onClose, onRename, onDelete, s
   }, [action]);
 
   return (
-    <main
-      className="screen"
-      aria-labelledby="selection-title"
-    >
-      <section className="reader-panel selection-panel">
-        <p className="eyebrow">Version 21</p>
-        <h1 id="selection-title" ref={headingRef} tabIndex={-1}>Recent Menus</h1>
-        <p className="selection-note">Load, rename, or delete a saved menu.</p>
-        {storageWarning && <p className="storage-warning" role="alert">{storageWarning}</p>}
-        <div className="restaurant-options">
-          {library.recentMenus.length === 0 && <p>No recent menus. Capture a new menu to get started.</p>}
-          {getMenuChoices(library).map(({ id, menu, capturedAt }) => (
-            <article className="restaurant-card" key={id} aria-labelledby={`restaurant-${id}`}>
-              <h2 id={`restaurant-${id}`}>{menu.restaurantName}</h2>
-              {id.startsWith('captured-') && <time className="recent-date" dateTime={capturedAt}>
-                Captured {new Date(capturedAt).toLocaleString()}
-              </time>}
-              <div className="restaurant-card-actions">
-                <button className="primary-button" type="button" aria-label={`Load ${menu.restaurantName}`} onClick={() => onSelect(id)}>Load</button>
-                {(['rename', 'delete'] as const).map((kind) => <button key={kind} type="button"
-                  aria-label={`${kind === 'rename' ? 'Rename' : 'Delete'} ${menu.restaurantName}`}
-                  className={kind === 'delete' ? 'destructive-button' : undefined}
-                  onClick={(event) => {
-                    openerRef.current = event.currentTarget;
-                    onAction({ id, name: menu.restaurantName, kind });
-                  }}>{kind === 'rename' ? 'Rename' : 'Delete'}</button>)}
-              </div>
-            </article>
-          ))}
-          <button type="button" onClick={onClose}>Cancel</button>
-        </div>
-      </section>
-      {action && <MenuManagementDialog action={action} onClose={onCloseAction}
-        onConfirm={(name) => {
-          if (action.kind === 'rename') onRename(action.id, name);
-          else onDelete(action.id);
-          // Deleting the selected menu returns home rather than back to this list.
-          if (action.kind !== 'delete' || action.id !== library.selectedId) onCloseAction();
-        }} />}
-    </main>
+    <div className="recent-menus-page">
+      <main className="screen selection-screen" aria-labelledby="selection-title">
+        <section className="reader-panel selection-panel">
+          <h1 id="selection-title" ref={headingRef} tabIndex={-1}>Recent Menus</h1>
+          <p className="selection-note">Load, rename, or delete a saved menu.</p>
+          {storageWarning && <p className="storage-warning" role="alert">{storageWarning}</p>}
+          <div className="restaurant-options">
+            {library.recentMenus.length === 0 && <p>No recent menus. Capture a new menu to get started.</p>}
+            {getMenuChoices(library).map(({ id, menu, capturedAt }) => (
+              <article className="restaurant-card" key={id} aria-labelledby={`restaurant-${id}`}>
+                <h2 id={`restaurant-${id}`}>{menu.restaurantName}</h2>
+                {id.startsWith('captured-') && <time className="recent-date" dateTime={capturedAt}>
+                  Captured {new Date(capturedAt).toLocaleString()}
+                </time>}
+                <div className="restaurant-card-actions">
+                  <button className="primary-button" type="button" aria-label={`Load ${menu.restaurantName}`} onClick={() => onSelect(id)}>Load</button>
+                  {(['rename', 'delete'] as const).map((kind) => <button key={kind} type="button"
+                    aria-label={`${kind === 'rename' ? 'Rename' : 'Delete'} ${menu.restaurantName}`}
+                    className={kind === 'delete' ? 'destructive-button' : undefined}
+                    onClick={(event) => {
+                      openerRef.current = event.currentTarget;
+                      onAction({ id, name: menu.restaurantName, kind });
+                    }}>{kind === 'rename' ? 'Rename' : 'Delete'}</button>)}
+                </div>
+              </article>
+            ))}
+            <button type="button" onClick={onClose}>Cancel</button>
+          </div>
+        </section>
+        {action && <MenuManagementDialog action={action} onClose={onCloseAction}
+          onConfirm={(name) => {
+            if (action.kind === 'rename') onRename(action.id, name);
+            else onDelete(action.id);
+            // Deleting the selected menu returns home rather than back to this list.
+            if (action.kind !== 'delete' || action.id !== library.selectedId) onCloseAction();
+          }} />}
+      </main>
+      <footer className="app-version">Menu Reader v{version}</footer>
+    </div>
   );
 }
 
