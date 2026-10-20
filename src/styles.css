@@ -212,6 +212,48 @@ h1 {
   line-height: 1.5;
 }
 
+.search-panel h1 {
+  font-size: clamp(1.75rem, 7vw, 2.5rem);
+  line-height: 1.2;
+}
+
+.search-form {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.search-form .menu-name-field {
+  margin-top: 0;
+}
+
+.search-result-card {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.search-result-card[aria-pressed="true"] {
+  border: 3px solid var(--accent);
+}
+
+.search-source {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0.5rem;
+  color: var(--accent-strong);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.search-venue {
+  font-size: 1.35rem;
+}
+
+.search-menu {
+  font-size: 1.1rem;
+  font-weight: 400;
+}
+
 .restaurant-options {
   display: grid;
   align-content: start;
@@ -312,6 +354,7 @@ h1 {
 }
 
 button:focus-visible,
+a:focus-visible,
 input:focus-visible,
 [tabindex="-1"]:focus-visible {
   outline: 3px solid var(--focus);

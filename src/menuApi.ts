@@ -2,8 +2,21 @@ import type { RestaurantMenu } from './data/menus';
 import { isRestaurantMenu } from './menuLibrary';
 import { readPhotoDimensions } from './photoDimensions';
 
-export const MENU_API_URL = import.meta.env.VITE_MENU_API_URL?.trim()
-  || 'https://we8asbpr8l.execute-api.us-east-1.amazonaws.com/prod/menus';
+const configuredApiUrl = import.meta.env.VITE_MENU_API_URL?.trim()
+  || 'https://we8asbpr8l.execute-api.us-east-1.amazonaws.com/prod/menu_image_transcribe';
+
+function operationUrl(operation: 'menu_image_transcribe' | 'menu_online_search') {
+  const url = new URL(configuredApiUrl);
+  url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/[^/]*$/, `/${operation}`);
+  url.search = '';
+  url.hash = '';
+  return url.href;
+}
+
+// Both operations share the configured host/stage. Legacy /menus configuration
+// is migrated as well, so existing local dotenv files keep working after upgrade.
+export const MENU_API_URL = operationUrl('menu_image_transcribe');
+export const MENU_SEARCH_API_URL = operationUrl('menu_online_search');
 export const MAX_IMAGES = 5;
 export const MAX_IMAGE_BYTES = 4_500_000;
 export const MAX_IMAGE_FILE_BYTES = 350_000;

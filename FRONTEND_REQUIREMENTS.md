@@ -30,3 +30,23 @@
 - Show the application version only in a subtle Recent Menus footer: “Menu Reader v1.0.0”.
 - Recent Menus offers Load, Rename, and confirmed Delete; show capture dates below names.
 	Deleting the selected menu leaves none loaded and disables Quick Nav until another is loaded.
+
+# Menu Reader frontend requirements — v1.1.0
+
+Introduce a new method by which users can find a menu and transcribe it: Web search
+
+Under the "Capture a new menu" button, add a button: "Search the web for a menu"
+
+Clicking this button starts a new, two-step user flow. In v1.1.0, we are just implementing the first step of the flow:
+
+Clicking "Search the web for a menu" opens a new page with:
+  -text instructions: "Describe the menu you are looking for. Be specific (ie, Rough & Tumble Columbia City dinner menu)."
+  -an input field for user input
+  -a Search button that sends the query to the `/menu_online_search` endpoint
+  -a Back button that goes back
+
+Clicking "Search" sends the query and opens a new page with a loading state. Once the API returns, the 1 to 8 options are displayed, below the text "Found X possible matches. Select one to load". Or it can display "Could not find a menu". Possible menues are shown in clickable cards with their venue identifier and menu identifier. Agent instruction is not shown. There is a back button at the bottom that return to the search page.
+
+We will implement menu loading in a later version.
+
+Each result also includes `source_url`. Display a separate source link using that attribute, without extracting URLs from `agent_instructions`. Keep agent instructions hidden for the future transcription agent. Blank or unusable source URLs hide the link without rejecting the menu result.

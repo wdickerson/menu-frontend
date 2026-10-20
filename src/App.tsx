@@ -4,6 +4,8 @@ import { version } from '../package.json';
 import type { RestaurantMenu } from './data/menus';
 import CameraCapture from './CameraCapture';
 import { postMenuImages } from './menuApi';
+import { MenuSearchPage, MenuSearchResultsPage } from './MenuSearch';
+import { createMenuSearchSession, type MenuSearchState } from './menuSearchSession';
 import { ImagePreparationQueue } from './imagePreparationQueue';
 import { installSpeechWarmup } from './speechWarmup';
 import { createBoundaryThump } from './boundaryThump';
@@ -458,9 +460,10 @@ Double tap to change reading speed.`}
 type MenuPageProps = {
   menu: RestaurantMenu | null;
   onCaptureMenu: () => void;
+  onSearchMenu: () => void;
   onSelectRestaurant: () => void;
   onEnterQuickNav: () => void;
-  focusTarget: 'capture' | 'load' | 'quick-nav' | null;
+  focusTarget: 'capture' | 'search' | 'load' | 'quick-nav' | null;
   storageWarning: string;
   processing: boolean;
   processingError: string;
@@ -469,10 +472,11 @@ type MenuPageProps = {
   onDismissProcessingError: () => void;
 };
 
-function MenuPage({ menu, onCaptureMenu, onSelectRestaurant, onEnterQuickNav, focusTarget,
+function MenuPage({ menu, onCaptureMenu, onSearchMenu, onSelectRestaurant, onEnterQuickNav, focusTarget,
   storageWarning, processing, processingError, onRetryProcessing, onCancelProcessing,
   onDismissProcessingError }: MenuPageProps) {
   const captureButtonRef = useRef<HTMLButtonElement | null>(null);
+  const searchButtonRef = useRef<HTMLButtonElement | null>(null);
   const loadButtonRef = useRef<HTMLButtonElement | null>(null);
   const quickNavButtonRef = useRef<HTMLButtonElement | null>(null);
   const processingHeadingRef = useRef<HTMLHeadingElement | null>(null);
@@ -485,6 +489,8 @@ function MenuPage({ menu, onCaptureMenu, onSelectRestaurant, onEnterQuickNav, fo
       processingErrorRef.current?.focus();
     } else if (focusTarget === 'capture') {
       captureButtonRef.current?.focus();
+    } else if (focusTarget === 'search') {
+      searchButtonRef.current?.focus();
     } else if (focusTarget === 'load') {
       loadButtonRef.current?.focus();
     } else if (focusTarget === 'quick-nav') {
@@ -497,10 +503,13 @@ function MenuPage({ menu, onCaptureMenu, onSelectRestaurant, onEnterQuickNav, fo
       <div className="menu-content">
         <header className="home-introduction">
           <h1>Menu Reader</h1>
-          <p>Turn restaurant menus into skimmable audio with quick navigation gestures. Use your phone's camera to capture menus, or reload a recent menu.</p>
+          <p>Turn restaurant menus into skimmable audio with quick navigation gestures. Capture menu photos, find menus on the web, or reload a recent menu.</p>
         </header>
         <button className="menu-button primary-button" type="button" ref={captureButtonRef} disabled={processing} onClick={onCaptureMenu}>
           Capture a New Menu
+        </button>
+        <button className="menu-button primary-button" type="button" ref={searchButtonRef} disabled={processing} onClick={onSearchMenu}>
+          Search the web for a menu
         </button>
         <button className="menu-button" type="button" ref={loadButtonRef} disabled={processing} onClick={onSelectRestaurant}>
           Reload a Recent Menu
@@ -663,14 +672,21 @@ function App() {
   const pendingImagesRef = useRef<ImagePreparationQueue | null>(null);
   const captureInputRef = useRef<HTMLInputElement | null>(null);
   const uploadRef = useRef<{ controller: AbortController; timeout: number | null } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchState, setSearchState] = useState<MenuSearchState>({ status: 'idle' });
+  const [searchSession] = useState(() => createMenuSearchSession(setSearchState));
+  const [searchFocusInput, setSearchFocusInput] = useState(false);
 
   useEffect(() => installSpeechWarmup(document, window.speechSynthesis), []);
 
   useEffect(() => {
     const navigation = createAppNavigation(window, (nextRoute) => {
       const previous = routeRef.current;
+      if (previous.screen === 'search-results' && nextRoute.screen !== 'search-results') searchSession.cancel();
+      if (nextRoute.screen === 'search') setSearchFocusInput(previous.screen === 'search-results');
       if (nextRoute.screen === 'menu') {
         setFocusTarget(previous.screen === 'capture' ? 'capture'
+          : previous.screen === 'search' || previous.screen === 'search-results' ? 'search'
           : previous.screen === 'selection' ? 'load'
             : previous.screen === 'quick-nav' ? 'quick-nav' : null);
       }
@@ -679,9 +695,10 @@ function App() {
     });
     navigationRef.current = navigation;
     return () => { navigation.dispose(); navigationRef.current = null; };
-  }, []);
+  }, [searchSession]);
 
   useEffect(() => () => {
+    searchSession.cancel(false);
     const upload = uploadRef.current;
     uploadRef.current = null;
     if (upload) {
@@ -689,7 +706,7 @@ function App() {
       upload.controller.abort();
     }
     pendingImagesRef.current?.dispose();
-  }, []);
+  }, [searchSession]);
 
   async function processMenu(queue: ImagePreparationQueue | null) {
     if (uploadRef.current || !queue) return;
@@ -770,6 +787,18 @@ function App() {
     />;
   }
 
+  if (screen === 'search') {
+    return <MenuSearchPage query={searchQuery} onQueryChange={setSearchQuery} focusInput={searchFocusInput}
+      onBack={() => navigationRef.current?.back()}
+      onSearch={() => {
+        if (searchSession.start(searchQuery.trim())) navigationRef.current?.navigate({ screen: 'search-results' });
+      }} />;
+  }
+
+  if (screen === 'search-results') {
+    return <MenuSearchResultsPage state={searchState} onBack={() => navigationRef.current?.back()} />;
+  }
+
   if (screen === 'selection') {
     const pendingAction = route.screen === 'selection' ? route.action : undefined;
     const actionMenu = library.recentMenus.find(({ id }) => id === pendingAction?.id);
@@ -816,6 +845,10 @@ function App() {
       onRetryProcessing={() => void processMenu(pendingImagesRef.current)}
       onCancelProcessing={cancelProcessing}
       onDismissProcessingError={dismissProcessingError}
+      onSearchMenu={() => {
+        dismissProcessingError();
+        navigationRef.current?.navigate({ screen: 'search' });
+      }}
       onCaptureMenu={() => {
         // Keep the native picker inside the original user gesture on mobile.
         flushSync(() => {

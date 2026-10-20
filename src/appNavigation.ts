@@ -1,6 +1,8 @@
 export type AppRoute =
   | { screen: 'menu' }
   | { screen: 'quick-nav' }
+  | { screen: 'search' }
+  | { screen: 'search-results' }
   | { screen: 'capture'; imageId?: string }
   | { screen: 'selection'; action?: { id: string; kind: 'rename' | 'delete' } };
 
