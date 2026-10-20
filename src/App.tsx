@@ -3,10 +3,9 @@ import { flushSync } from 'react-dom';
 import { version } from '../package.json';
 import type { RestaurantMenu } from './data/menus';
 import CameraCapture from './CameraCapture';
-import { postMenuImages } from './menuApi';
 import { MenuSearchPage, MenuSearchResultsPage } from './MenuSearch';
 import { createMenuSearchSession, type MenuSearchState } from './menuSearchSession';
-import { ImagePreparationQueue } from './imagePreparationQueue';
+import { createMenuProcessingSession, type MenuProcessingJob, type MenuProcessingState } from './menuProcessingSession';
 import { installSpeechWarmup } from './speechWarmup';
 import { createBoundaryThump } from './boundaryThump';
 import { createAppNavigation, type AppRoute } from './appNavigation';
@@ -467,13 +466,14 @@ type MenuPageProps = {
   storageWarning: string;
   processing: boolean;
   processingError: string;
+  processingKind: MenuProcessingJob['kind'] | null;
   onRetryProcessing: () => void;
   onCancelProcessing: () => void;
   onDismissProcessingError: () => void;
 };
 
 function MenuPage({ menu, onCaptureMenu, onSearchMenu, onSelectRestaurant, onEnterQuickNav, focusTarget,
-  storageWarning, processing, processingError, onRetryProcessing, onCancelProcessing,
+  storageWarning, processing, processingError, processingKind, onRetryProcessing, onCancelProcessing,
   onDismissProcessingError }: MenuPageProps) {
   const captureButtonRef = useRef<HTMLButtonElement | null>(null);
   const searchButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -528,7 +528,9 @@ function MenuPage({ menu, onCaptureMenu, onSearchMenu, onSelectRestaurant, onEnt
         </section>}
         {processingError && <section className="processing-panel">
           <div ref={processingErrorRef} role="alert" tabIndex={-1}><p>{processingError}</p></div>
-          <p>{menu && 'Your previous menu is still available. '}You can retry using the same photos or capture a new menu.</p>
+          <p>{menu && 'Your previous menu is still available. '}{processingKind === 'online'
+            ? 'You can retry the selected online menu or search for another match.'
+            : 'You can retry using the same photos or capture a new menu.'}</p>
           <div className="processing-error-actions">
             <button className="menu-button primary-button" type="button" onClick={onRetryProcessing}>Retry loading menu</button>
             <button className="menu-button" type="button" onClick={onDismissProcessingError}>Dismiss</button>
@@ -667,11 +669,13 @@ function App() {
   const [focusTarget, setFocusTarget] = useState<MenuPageProps['focusTarget']>(null);
   const [speechRate, setSpeechRate] = useState<SpeechRate>(getSavedSpeechRate);
   const [storageWarning, setStorageWarning] = useState('');
-  const [processing, setProcessing] = useState(false);
-  const [processingError, setProcessingError] = useState('');
-  const pendingImagesRef = useRef<ImagePreparationQueue | null>(null);
+  const [processingState, setProcessingState] = useState<MenuProcessingState>({ status: 'idle' });
+  const [processingSession] = useState(() => createMenuProcessingSession(setProcessingState, (menu) => {
+    setLibrary((current) => addRecentMenu(current, menu));
+    setFocusTarget('load');
+  }));
+  const processingReturnRef = useRef(false);
   const captureInputRef = useRef<HTMLInputElement | null>(null);
-  const uploadRef = useRef<{ controller: AbortController; timeout: number | null } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchState, setSearchState] = useState<MenuSearchState>({ status: 'idle' });
   const [searchSession] = useState(() => createMenuSearchSession(setSearchState));
@@ -682,10 +686,14 @@ function App() {
   useEffect(() => {
     const navigation = createAppNavigation(window, (nextRoute) => {
       const previous = routeRef.current;
+      if (previous.screen === 'menu' && nextRoute.screen !== 'menu') processingSession.cancel();
       if (previous.screen === 'search-results' && nextRoute.screen !== 'search-results') searchSession.cancel();
       if (nextRoute.screen === 'search') setSearchFocusInput(previous.screen === 'search-results');
       if (nextRoute.screen === 'menu') {
-        setFocusTarget(previous.screen === 'capture' ? 'capture'
+        // history.go() is asynchronous. Preserve a fast processing result's
+        // focus intent when the requested home traversal eventually commits.
+        if (processingReturnRef.current) processingReturnRef.current = false;
+        else setFocusTarget(previous.screen === 'capture' ? 'capture'
           : previous.screen === 'search' || previous.screen === 'search-results' ? 'search'
           : previous.screen === 'selection' ? 'load'
             : previous.screen === 'quick-nav' ? 'quick-nav' : null);
@@ -695,75 +703,28 @@ function App() {
     });
     navigationRef.current = navigation;
     return () => { navigation.dispose(); navigationRef.current = null; };
-  }, [searchSession]);
+  }, [searchSession, processingSession]);
 
   useEffect(() => () => {
     searchSession.cancel(false);
-    const upload = uploadRef.current;
-    uploadRef.current = null;
-    if (upload) {
-      if (upload.timeout !== null) window.clearTimeout(upload.timeout);
-      upload.controller.abort();
-    }
-    pendingImagesRef.current?.dispose();
-  }, [searchSession]);
+    processingSession.dispose();
+  }, [searchSession, processingSession]);
 
-  async function processMenu(queue: ImagePreparationQueue | null) {
-    if (uploadRef.current || !queue) return;
-    pendingImagesRef.current = queue;
-    navigationRef.current?.home();
+  function processMenu(job: MenuProcessingJob) {
+    if (!processingSession.start(job)) return;
+    processingReturnRef.current = routeRef.current.screen !== 'menu';
     setFocusTarget(null);
-    setProcessingError('');
-    setProcessing(true);
-    const controller = new AbortController();
-    let timedOut = false;
-    const upload = { controller, timeout: null as number | null };
-    uploadRef.current = upload;
-    try {
-      const images = await queue.collect(controller.signal);
-      if (uploadRef.current !== upload || controller.signal.aborted) return;
-      // Give the API its full timeout, regardless of on-device preparation time.
-      upload.timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, 35_000);
-      const menu = await postMenuImages(images, controller.signal);
-      if (uploadRef.current?.controller !== controller || controller.signal.aborted) return;
-      setLibrary((current) => addRecentMenu(current, menu));
-      queue.dispose();
-      pendingImagesRef.current = null;
-      setFocusTarget('load');
-    } catch (error) {
-      if (uploadRef.current?.controller === controller) {
-        setProcessingError(timedOut ? 'Reading the menu took too long. Try again or capture fewer images.'
-          : error instanceof TypeError ? 'Could not reach the menu service. Check your connection and try again.'
-            : error instanceof Error ? error.message : 'The menu could not be loaded. Try again.');
-      }
-    } finally {
-      if (upload.timeout !== null) window.clearTimeout(upload.timeout);
-      if (uploadRef.current?.controller === controller) {
-        uploadRef.current = null;
-        setProcessing(false);
-      }
-    }
+    navigationRef.current?.home();
   }
 
   function cancelProcessing() {
-    const upload = uploadRef.current;
-    uploadRef.current = null;
-    if (upload) {
-      if (upload.timeout !== null) window.clearTimeout(upload.timeout);
-      upload.controller.abort();
-    }
-    pendingImagesRef.current?.dispose();
-    pendingImagesRef.current = null;
-    setProcessing(false);
-    setProcessingError('');
-    setFocusTarget('capture');
+    const target = processingState.status !== 'idle' && processingState.kind === 'online' ? 'search' : 'capture';
+    processingSession.cancel();
+    setFocusTarget(target);
   }
 
   function dismissProcessingError() {
-    pendingImagesRef.current?.dispose();
-    pendingImagesRef.current = null;
-    setProcessingError('');
-    setFocusTarget('capture');
+    cancelProcessing();
   }
 
   useEffect(() => {
@@ -783,7 +744,7 @@ function App() {
       onExpandImage={(imageId) => navigationRef.current?.navigate({ screen: 'capture', imageId })}
       onCloseImage={() => navigationRef.current?.back()}
       onClose={() => navigationRef.current?.home()}
-      onSubmit={(images) => void processMenu(images)}
+      onSubmit={(queue) => processMenu({ kind: 'images', queue })}
     />;
   }
 
@@ -796,7 +757,8 @@ function App() {
   }
 
   if (screen === 'search-results') {
-    return <MenuSearchResultsPage state={searchState} onBack={() => navigationRef.current?.back()} />;
+    return <MenuSearchResultsPage state={searchState} onBack={() => navigationRef.current?.back()}
+      onLoad={(query, menu) => processMenu({ kind: 'online', query, menu })} />;
   }
 
   if (screen === 'selection') {
@@ -840,9 +802,10 @@ function App() {
       menu={selectedMenu}
       focusTarget={focusTarget}
       storageWarning={storageWarning}
-      processing={processing}
-      processingError={processingError}
-      onRetryProcessing={() => void processMenu(pendingImagesRef.current)}
+      processing={processingState.status === 'loading'}
+      processingError={processingState.status === 'error' ? processingState.message : ''}
+      processingKind={processingState.status === 'idle' ? null : processingState.kind}
+      onRetryProcessing={() => { setFocusTarget(null); processingSession.retry(); }}
       onCancelProcessing={cancelProcessing}
       onDismissProcessingError={dismissProcessingError}
       onSearchMenu={() => {

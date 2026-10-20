@@ -9,12 +9,13 @@ afterEach(() => {
 });
 
 describe('menu API environment URL', () => {
-  it.each([undefined, '', '   ', '\t\n'])('falls back to both deployed operations for %s', async (value) => {
+  it.each([undefined, '', '   ', '\t\n'])('falls back to all deployed operations for %s', async (value) => {
     vi.stubEnv('VITE_MENU_API_URL', value);
     vi.resetModules();
-    const { MENU_API_URL, MENU_SEARCH_API_URL } = await import('./menuApi');
+    const { MENU_API_URL, MENU_SEARCH_API_URL, MENU_ONLINE_TRANSCRIBE_API_URL } = await import('./menuApi');
     expect(MENU_API_URL).toBe(`${deployedBaseUrl}/menu_image_transcribe`);
     expect(MENU_SEARCH_API_URL).toBe(`${deployedBaseUrl}/menu_online_search`);
+    expect(MENU_ONLINE_TRANSCRIBE_API_URL).toBe(`${deployedBaseUrl}/menu_online_transcribe`);
   });
 
   it.each([
@@ -23,6 +24,7 @@ describe('menu API environment URL', () => {
     { configured: 'https://api.example.test/prod/menu_image_transcribe', base: 'https://api.example.test/prod' },
     { configured: 'https://api.example.test/proxy/v1/stage/menu_online_search', base: 'https://api.example.test/proxy/v1/stage' },
     { configured: 'https://api.example.test/prod/menu_image_transcribe/', base: 'https://api.example.test/prod' },
+    { configured: 'https://api.example.test/prod/menu_online_transcribe/?old=true#menu', base: 'https://api.example.test/prod' },
     { configured: 'https://api.example.test/prod/menu_online_search///?debug=true#results', base: 'https://api.example.test/prod' },
     { configured: 'https://api.example.test/prod/menu_image_transcribe?operation=old#photos', base: 'https://api.example.test/prod' },
     { configured: 'http://127.0.0.1:8000/menus', base: 'http://127.0.0.1:8000' },
@@ -30,9 +32,10 @@ describe('menu API environment URL', () => {
   ])('derives sibling operations from $configured', async ({ configured, base }) => {
     vi.stubEnv('VITE_MENU_API_URL', configured);
     vi.resetModules();
-    const { MENU_API_URL, MENU_SEARCH_API_URL } = await import('./menuApi');
+    const { MENU_API_URL, MENU_SEARCH_API_URL, MENU_ONLINE_TRANSCRIBE_API_URL } = await import('./menuApi');
     expect(MENU_API_URL).toBe(`${base}/menu_image_transcribe`);
     expect(MENU_SEARCH_API_URL).toBe(`${base}/menu_online_search`);
+    expect(MENU_ONLINE_TRANSCRIBE_API_URL).toBe(`${base}/menu_online_transcribe`);
   });
 
   it('posts photos and search JSON to their configured sibling endpoints after legacy migration', async () => {

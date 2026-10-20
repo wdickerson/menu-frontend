@@ -5,7 +5,7 @@ import { readPhotoDimensions } from './photoDimensions';
 const configuredApiUrl = import.meta.env.VITE_MENU_API_URL?.trim()
   || 'https://we8asbpr8l.execute-api.us-east-1.amazonaws.com/prod/menu_image_transcribe';
 
-function operationUrl(operation: 'menu_image_transcribe' | 'menu_online_search') {
+function operationUrl(operation: 'menu_image_transcribe' | 'menu_online_search' | 'menu_online_transcribe') {
   const url = new URL(configuredApiUrl);
   url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/[^/]*$/, `/${operation}`);
   url.search = '';
@@ -13,10 +13,11 @@ function operationUrl(operation: 'menu_image_transcribe' | 'menu_online_search')
   return url.href;
 }
 
-// Both operations share the configured host/stage. Legacy /menus configuration
+// All operations share the configured host/stage. Legacy /menus configuration
 // is migrated as well, so existing local dotenv files keep working after upgrade.
 export const MENU_API_URL = operationUrl('menu_image_transcribe');
 export const MENU_SEARCH_API_URL = operationUrl('menu_online_search');
+export const MENU_ONLINE_TRANSCRIBE_API_URL = operationUrl('menu_online_transcribe');
 export const MAX_IMAGES = 5;
 export const MAX_IMAGE_BYTES = 4_500_000;
 export const MAX_IMAGE_FILE_BYTES = 350_000;

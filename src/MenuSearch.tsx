@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { MAX_SEARCH_QUERY_LENGTH, menuSourceUrl } from './menuSearchApi';
+import { useEffect, useRef } from 'react';
+import { MAX_SEARCH_QUERY_LENGTH, menuSourceUrl, type PossibleMenu } from './menuSearchApi';
 import type { MenuSearchState } from './menuSearchSession';
 
 export function MenuSearchPage({ query, onQueryChange, onSearch, onBack, focusInput }: {
@@ -34,9 +34,12 @@ export function MenuSearchPage({ query, onQueryChange, onSearch, onBack, focusIn
   </main>;
 }
 
-export function MenuSearchResultsPage({ state, onBack }: { state: MenuSearchState; onBack: () => void }) {
+export function MenuSearchResultsPage({ state, onBack, onLoad }: {
+  state: MenuSearchState;
+  onBack: () => void;
+  onLoad: (query: string, menu: PossibleMenu) => void;
+}) {
   const summaryRef = useRef<HTMLHeadingElement>(null);
-  const [selected, setSelected] = useState<number | null>(null);
   useEffect(() => { summaryRef.current?.focus(); }, [state]);
   const loading = state.status === 'loading';
   const menus = state.status === 'complete' ? state.menus : [];
@@ -60,7 +63,7 @@ export function MenuSearchResultsPage({ state, onBack }: { state: MenuSearchStat
             const sourceUrl = menuSourceUrl(menu);
             return <article className="search-match" key={index}>
               <button className="menu-button search-result-card" type="button"
-                aria-pressed={selected === index} onClick={() => setSelected(index)}>
+                onClick={() => { if (state.status === 'complete') onLoad(state.query, menu); }}>
                 <span className="search-venue">{menu.venue_identifier}</span>
                 <span className="search-menu">{menu.menu_identifier}</span>
               </button>
@@ -71,9 +74,6 @@ export function MenuSearchResultsPage({ state, onBack }: { state: MenuSearchStat
             </article>;
           })}
         </div>
-        <p className="selection-note" role="status">{selected !== null
-          ? 'Menu selected. Loading online menus will be available in a future version.'
-          : 'Online menu loading is not available in this version yet.'}</p>
       </>}
       <button className="menu-button" type="button" onClick={onBack}>Back</button>
     </section>

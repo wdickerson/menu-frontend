@@ -50,3 +50,13 @@ Clicking "Search" sends the query and opens a new page with a loading state. Onc
 We will implement menu loading in a later version.
 
 Each result also includes `source_url`. Display a separate source link using that attribute, without extracting URLs from `agent_instructions`. Keep agent instructions hidden for the future transcription agent. Blank or unusable source URLs hide the link without rejecting the menu result.
+
+# Menu Reader frontend requirements — v1.2.0
+
+Building on v1.1.0, allow a user to load a menu form the search results page.
+
+When a user clicks on the menu, send a POST the `/menu_online_transcribe` endpoint with the three API-provided parameters, as well as the original search query. (The original search query is provided in case it helps the agent determine the venue name).
+
+While the POST is pending, show a screen similar to when the user is waiting for image transcription. Consider using a shared componenent, but only if that makes sense.
+
+When the POST returns, load the menu and save it to localStorage, just as we do for image transcription.

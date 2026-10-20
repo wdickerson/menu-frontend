@@ -1,8 +1,8 @@
-# Menu Reader frontend v1.1.0
+# Menu Reader frontend v1.2.0
 
 React/TypeScript/Vite app for capturing menus, saving them locally, and reading
 them with a screen reader or spoken Quick Nav gestures. Web search finds candidate
-menus; selecting one does not load or transcribe it yet.
+menus; selecting one transcribes, loads, and saves it to Recent Menus.
 See [FRONTEND_REQUIREMENTS.md](FRONTEND_REQUIREMENTS.md) for current behavior.
 
 ## Development
@@ -25,7 +25,7 @@ npm run dev
 	deployed endpoint in [src/menuApi.ts](src/menuApi.ts). Start the API separately.
 - Search uses `/menu_online_search` on the same API host and stage. Legacy
 	`/menus` configuration is migrated automatically to the renamed image route.
-	Deploy API v1.1.0 and the CloudFormation changes before releasing this client;
+	Deploy API v1.2.0 and the CloudFormation changes before releasing this client;
 	online search requires the operator to enable `EnableLiveSearch` explicitly.
 - Search sends `{"query":"..."}` (1–500 characters). API `422/no_menu_found`
 	shows the no-match state; service failures remain recoverable errors. Back
@@ -35,6 +35,18 @@ npm run dev
 	`source_url` field, never from `agent_instructions`. Unsafe or blank source links
 	are hidden without rejecting the result. Private agent extraction instructions
 	are never rendered. Deploy the API and frontend together for this four-field contract.
+- Selecting a result posts `{"query":"original query","menu":{...}}` to
+	`/menu_online_transcribe` on the same API host/stage. All four result fields are
+	sent unchanged, with the query that produced the results, not an edited draft.
+- Online and image transcription share the home processing screen, 35-second
+	network deadline, cancellation, recoverable errors, and retry behavior. The old
+	menu remains selected until success; the result is then added to the same
+	localStorage library. Leaving home while processing cancels ownership, and
+	Back/Forward never automatically repeats a paid transcription request.
+- Online transcription uses the existing `EnableLiveTranscription` flag and
+	OpenAI credentials even if image transcription uses Anthropic. Search has its
+	separate `EnableLiveSearch` flag. Deploy the new gateway route and API code
+	before the frontend; this release does not add a new enablement flag.
 - Vite configuration is public and baked into builds: never include provider keys.
 	Remove local endpoint overrides before deployment. Phone loopback refers to the phone.
 - Use HTTPS in production and verify API CORS for the frontend origin.
