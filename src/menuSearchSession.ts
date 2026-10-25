@@ -23,7 +23,7 @@ export function createMenuSearchSession(onChange: (state: MenuSearchState) => vo
     clearTimeout(current.timer);
     current.controller.abort();
     if (notify) onChange({ status: 'error', query: current.query,
-      message: 'Search canceled. Go back to search again.' });
+      message: 'Search canceled. Submit a search to try again.' });
   }
 
   return {
@@ -35,7 +35,7 @@ export function createMenuSearchSession(onChange: (state: MenuSearchState) => vo
         if (active !== current) return;
         active = null;
         controller.abort();
-        onChange({ status: 'error', query, message: 'Searching took too long. Go back and try again.' });
+        onChange({ status: 'error', query, message: 'Searching took too long. Please try again.' });
       }, SEARCH_TIMEOUT_MS) };
       active = current;
       onChange({ status: 'loading', query });

@@ -5,8 +5,8 @@ import { createMenuSearchSession, type MenuSearchState } from './menuSearchSessi
 const menus: PossibleMenu[] = [{ venue_identifier: 'Rough & Tumble Columbia City',
   menu_identifier: 'Dinner', source_url: 'https://example.test/menu.pdf',
   agent_instructions: 'Read https://example.test/menu.pdf' }];
-const canceledMessage = 'Search canceled. Go back to search again.';
-const timeoutMessage = 'Searching took too long. Go back and try again.';
+const canceledMessage = 'Search canceled. Submit a search to try again.';
+const timeoutMessage = 'Searching took too long. Please try again.';
 
 function deferred() {
   let resolve!: (value: PossibleMenu[]) => void;

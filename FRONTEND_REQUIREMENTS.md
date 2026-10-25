@@ -60,3 +60,21 @@ When a user clicks on the menu, send a POST the `/menu_online_transcribe` endpoi
 While the POST is pending, show a screen similar to when the user is waiting for image transcription. Consider using a shared componenent, but only if that makes sense.
 
 When the POST returns, load the menu and save it to localStorage, just as we do for image transcription.
+
+
+# Menu Reader frontend requirements — v1.2.1
+
+Keep screen awake while in quick nav mode, even if the user seems to be inactive
+
+Make the Exit Quick Nav Mode button smaller. Make it more like link text, about half of its current height, aligned to the right of the page, not full width.
+
+Change speed setting tap value to be: 1, 1.25, 1.5, 1.75, 2, 2.5
+
+# Menu Reader frontend requirements — v1.3.0
+
+Make the web search page and the search results page one single page, and retain the search results until another query is made, even if a user navigates to the homepage and then back to web search. Place an "x" in the input box, on the right, to clear the current search term.
+
+On the home page, make the text in the first two buttons:
+"Capture a Menu with Camera"
+"Search for a Menu Online"
+

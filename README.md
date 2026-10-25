@@ -1,4 +1,4 @@
-# Menu Reader frontend v1.2.0
+# Menu Reader frontend v1.3.0
 
 React/TypeScript/Vite app for capturing menus, saving them locally, and reading
 them with a screen reader or spoken Quick Nav gestures. Web search finds candidate
@@ -28,9 +28,11 @@ npm run dev
 	Deploy API v1.2.0 and the CloudFormation changes before releasing this client;
 	online search requires the operator to enable `EnableLiveSearch` explicitly.
 - Search sends `{"query":"..."}` (1–500 characters). API `422/no_menu_found`
-	shows the no-match state; service failures remain recoverable errors. Back
-	cancels a pending search, preserves the draft, and restores input focus. Forward
-	never silently repeats paid requests. Queries and results remain memory-only.
+	shows the no-match state; service failures remain recoverable errors. The search
+	form and results share one page. Completed results and the draft survive trips
+	home until a new search is submitted; clearing or editing the draft keeps results.
+	Back returns home and cancels any pending search. Back/Forward never silently
+	repeats paid requests. Queries and results remain memory-only and reset on refresh.
 - Results include a separate clickable menu-source citation from each result's
 	`source_url` field, never from `agent_instructions`. Unsafe or blank source links
 	are hidden without rejecting the result. Private agent extraction instructions

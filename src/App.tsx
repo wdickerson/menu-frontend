@@ -3,10 +3,11 @@ import { flushSync } from 'react-dom';
 import { version } from '../package.json';
 import type { RestaurantMenu } from './data/menus';
 import CameraCapture from './CameraCapture';
-import { MenuSearchPage, MenuSearchResultsPage } from './MenuSearch';
+import { MenuSearchPage } from './MenuSearch';
 import { createMenuSearchSession, type MenuSearchState } from './menuSearchSession';
 import { createMenuProcessingSession, type MenuProcessingJob, type MenuProcessingState } from './menuProcessingSession';
 import { installSpeechWarmup } from './speechWarmup';
+import { keepScreenAwake } from './screenWakeLock';
 import { createBoundaryThump } from './boundaryThump';
 import { createAppNavigation, type AppRoute } from './appNavigation';
 import { addRecentMenu, deleteRecentMenu, getMenuChoices, getSelectedMenu, loadMenuLibrary,
@@ -33,7 +34,7 @@ type PendingTap = {
   timerId: number;
 };
 
-const SPEECH_RATES = [1, 1.5, 2, 2.5, 3, 3.5] as const;
+const SPEECH_RATES = [1, 1.25, 1.5, 1.75, 2, 2.5] as const;
 type SpeechRate = (typeof SPEECH_RATES)[number];
 const SPEECH_RATE_STORAGE_KEY = 'menu-reader.speechRate';
 const FLICK_THRESHOLD = 55;
@@ -126,6 +127,8 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
   const boundaryThumpRef = useRef<ReturnType<typeof createBoundaryThump> | null>(null);
   const boundarySlotsRef = useRef<BoundarySlots>({ section: null, item: null });
   const readSlotsRef = useRef<ReadSlots>({ section: false, item: false });
+
+  useEffect(() => keepScreenAwake(document, navigator.wakeLock), []);
 
   useEffect(() => {
     const boundaryThump = createBoundaryThump();
@@ -503,13 +506,13 @@ function MenuPage({ menu, onCaptureMenu, onSearchMenu, onSelectRestaurant, onEnt
       <div className="menu-content">
         <header className="home-introduction">
           <h1>Menu Reader</h1>
-          <p>Turn restaurant menus into skimmable audio with quick navigation gestures. Capture menu photos, find menus on the web, or reload a recent menu.</p>
+          <p>Turn restaurant menus into skimmable audio with quick navigation gestures. Capture menus with the camera, search for menus online, or reload a recent menu.</p>
         </header>
         <button className="menu-button primary-button" type="button" ref={captureButtonRef} disabled={processing} onClick={onCaptureMenu}>
-          Capture a New Menu
+          Capture a Menu with Camera
         </button>
         <button className="menu-button primary-button" type="button" ref={searchButtonRef} disabled={processing} onClick={onSearchMenu}>
-          Search the web for a menu
+          Search for a Menu Online
         </button>
         <button className="menu-button" type="button" ref={loadButtonRef} disabled={processing} onClick={onSelectRestaurant}>
           Reload a Recent Menu
@@ -522,7 +525,7 @@ function MenuPage({ menu, onCaptureMenu, onSearchMenu, onSelectRestaurant, onEnt
           <h2 id="processing-title" ref={processingHeadingRef} tabIndex={-1}>Processing your menu…</h2>
           <div role="status">
             <span className="processing-indicator" aria-hidden="true" />
-            <p>This may take 20 seconds or longer. Please keep this page open while your menu is being read.</p>
+            <p>This may take 20 seconds or longer. Please keep this page open while the menu is being processed.</p>
           </div>
           <button className="menu-button" type="button" onClick={onCancelProcessing}>Cancel processing</button>
         </section>}
@@ -679,7 +682,6 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchState, setSearchState] = useState<MenuSearchState>({ status: 'idle' });
   const [searchSession] = useState(() => createMenuSearchSession(setSearchState));
-  const [searchFocusInput, setSearchFocusInput] = useState(false);
 
   useEffect(() => installSpeechWarmup(document, window.speechSynthesis), []);
 
@@ -687,14 +689,13 @@ function App() {
     const navigation = createAppNavigation(window, (nextRoute) => {
       const previous = routeRef.current;
       if (previous.screen === 'menu' && nextRoute.screen !== 'menu') processingSession.cancel();
-      if (previous.screen === 'search-results' && nextRoute.screen !== 'search-results') searchSession.cancel();
-      if (nextRoute.screen === 'search') setSearchFocusInput(previous.screen === 'search-results');
+      if (previous.screen === 'search' && nextRoute.screen !== 'search') searchSession.cancel();
       if (nextRoute.screen === 'menu') {
         // history.go() is asynchronous. Preserve a fast processing result's
         // focus intent when the requested home traversal eventually commits.
         if (processingReturnRef.current) processingReturnRef.current = false;
         else setFocusTarget(previous.screen === 'capture' ? 'capture'
-          : previous.screen === 'search' || previous.screen === 'search-results' ? 'search'
+          : previous.screen === 'search' ? 'search'
           : previous.screen === 'selection' ? 'load'
             : previous.screen === 'quick-nav' ? 'quick-nav' : null);
       }
@@ -749,15 +750,9 @@ function App() {
   }
 
   if (screen === 'search') {
-    return <MenuSearchPage query={searchQuery} onQueryChange={setSearchQuery} focusInput={searchFocusInput}
+    return <MenuSearchPage query={searchQuery} state={searchState} onQueryChange={setSearchQuery}
       onBack={() => navigationRef.current?.back()}
-      onSearch={() => {
-        if (searchSession.start(searchQuery.trim())) navigationRef.current?.navigate({ screen: 'search-results' });
-      }} />;
-  }
-
-  if (screen === 'search-results') {
-    return <MenuSearchResultsPage state={searchState} onBack={() => navigationRef.current?.back()}
+      onSearch={() => { searchSession.start(searchQuery.trim()); }}
       onLoad={(query, menu) => processMenu({ kind: 'online', query, menu })} />;
   }
 
