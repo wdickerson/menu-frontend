@@ -12,7 +12,7 @@ export function isRestaurantMenu(value: unknown): value is RestaurantMenu {
   return typeof menu.restaurantName === 'string' && menu.restaurantName.trim().length > 0
     && Array.isArray(menu.sections) && menu.sections.length > 0
     && menu.sections.every((section) => section && typeof section.name === 'string'
-      && section.name.trim().length > 0 && Array.isArray(section.items) && section.items.length > 0
+      && Array.isArray(section.items)
       && section.items.every((item: unknown) => typeof item === 'string' && item.trim().length > 0));
 }
 

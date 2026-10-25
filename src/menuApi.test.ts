@@ -25,6 +25,16 @@ describe('menu API', () => {
     expect([...options.body.keys()]).toEqual(['images', 'images']);
   });
 
+  it.each([
+    { sections: [{ name: 'Hours', items: [] }] },
+    { sections: [{ name: '', items: [] }, ...menu.sections, { name: 'Hours', items: [] }] },
+    { sections: [{ name: '', items: ['Soup 8'] }] },
+  ])('accepts empty sections and blank headings: $sections', async ({ sections }) => {
+    const responseMenu = { ...menu, sections };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(responseMenu))));
+    expect(await postMenuImages([image()], signal())).toEqual(responseMenu);
+  });
+
   it('accepts five images and rejects a sixth before making a request', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(menu)));
     vi.stubGlobal('fetch', fetchMock);

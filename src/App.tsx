@@ -298,6 +298,12 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
     target: NavigationTarget,
     direction: -1 | 1,
   ) {
+    // An empty section has no item slot to enter or return to on reversal.
+    if (target === 'item' && menu.sections[sectionIndexRef.current].items.length === 0) {
+      playBoundaryThump();
+      return;
+    }
+
     const boundarySlot = boundarySlotsRef.current[target];
 
     if (boundarySlot !== null) {

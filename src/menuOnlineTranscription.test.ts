@@ -20,6 +20,16 @@ describe('online menu transcription API', () => {
     });
   });
 
+  it.each([
+    { sections: [{ name: 'Hours', items: [] }] },
+    { sections: [{ name: '', items: [] }, ...menu.sections, { name: 'Hours', items: [] }] },
+    { sections: [{ name: '', items: ['Soup $8'] }] },
+  ])('accepts empty sections and blank headings: $sections', async ({ sections }) => {
+    const responseMenu = { ...menu, sections };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(responseMenu))));
+    expect(await postOnlineMenu('Dinner', selected, signal())).toEqual(responseMenu);
+  });
+
   it('does not derive the selected source from private instructions or discard blank fields', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(menu)));
     vi.stubGlobal('fetch', fetchMock);

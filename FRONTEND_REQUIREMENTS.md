@@ -10,6 +10,9 @@
 	and right/left through next/previous items. Tap repeats the last utterance.
 - Double-tap announces the speed; consecutive double-taps cycle 1–3.5× in 0.5 increments
 	(default 1.5×). List boundaries thump instead of wrapping; reversing reads the endpoint.
+- Preserve empty sections and blank headings in API responses and saved menus.
+	In an empty section, every left/right flick only plays the boundary thump, including
+	repeated flicks and direction reversals; section navigation remains available.
 - Browser Back closes nested dialogs/image inspection before their parent screens.
 	Navigation leaves the URL unchanged; refreshing starts home with saved preferences.
 - Use a light, high-contrast theme, green primary/grey secondary/red destructive actions,

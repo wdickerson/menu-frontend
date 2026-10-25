@@ -123,9 +123,23 @@ describe('menu library', () => {
     expect(getSelectedMenu(library)).toEqual(menu);
   });
 
+  it.each([
+    { sections: [{ name: 'Hours', items: [] }] },
+    { sections: [{ name: '', items: [] }, ...menu.sections, { name: 'Hours', items: [] }] },
+    { sections: [{ name: '', items: ['Tea 4'] }] },
+  ])('accepts and persists empty sections and blank headings: $sections', ({ sections }) => {
+    const withEmptySections = { ...menu, sections };
+    expect(isRestaurantMenu(withEmptySections)).toBe(true);
+    const library = addRecentMenu(loadMenuLibrary(), withEmptySections);
+    expect(saveMenuLibrary(library)).toBe(true);
+    expect(getSelectedMenu(loadMenuLibrary())).toEqual(withEmptySections);
+  });
+
   it('rejects menus that cannot be safely navigated', () => {
     for (const invalid of [null, {}, { ...menu, restaurantName: '' }, { ...menu, sections: [] },
-      { ...menu, sections: [null] }, { ...menu, sections: [{ name: 'Food', items: [] }] },
+      { ...menu, sections: [null] }, { ...menu, sections: [{ name: null, items: [] }] },
+      { ...menu, sections: [{ name: 'Food', items: null }] },
+      { ...menu, sections: [{ name: 'Food', items: [' '] }] },
       { ...menu, sections: [{ name: 'Food', items: [42] }] }]) {
       expect(isRestaurantMenu(invalid)).toBe(false);
     }
