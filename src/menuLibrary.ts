@@ -1,4 +1,5 @@
 import { restaurantMenus, type RestaurantMenu } from './data/menus';
+import { isSharedMenuId } from './sharedMenuId';
 
 export type RecentMenu = { id: string; capturedAt: string; menu: RestaurantMenu };
 export type MenuLibrary = { selectedId: string; recentMenus: RecentMenu[] };
@@ -50,7 +51,11 @@ export function loadMenuLibrary(): MenuLibrary {
         || !Number.isFinite(Date.parse(entry.capturedAt)) || !isRestaurantMenu(entry.menu)) return false;
       ids.add(entry.id);
       return true;
-    }).slice(0, MAX_RECENT_MENUS);
+    }).slice(0, MAX_RECENT_MENUS).map((entry) => {
+      if (!('sharedMenuId' in entry.menu) || isSharedMenuId(entry.menu.sharedMenuId)) return entry;
+      const { sharedMenuId: _sharedMenuId, ...menu } = entry.menu;
+      return { ...entry, menu };
+    });
     const library = { selectedId: typeof selectedId === 'string' ? selectedId : fallback.selectedId,
       recentMenus: validRecentMenus };
     if (library.selectedId !== '' && !getMenuChoices(library).some(({ id }) => id === library.selectedId)) {
@@ -70,8 +75,20 @@ export function addRecentMenu(library: MenuLibrary, menu: RestaurantMenu): MenuL
 export function renameRecentMenu(library: MenuLibrary, id: string, name: string): MenuLibrary {
   const restaurantName = name.trim();
   if (!restaurantName) return library;
-  return { ...library, recentMenus: library.recentMenus.map((entry) => entry.id === id
-    ? { ...entry, menu: { ...entry.menu, restaurantName } } : entry) };
+  return { ...library, recentMenus: library.recentMenus.map((entry) => {
+    if (entry.id !== id) return entry;
+    const { sharedMenuId: _sharedMenuId, ...menu } = entry.menu;
+    return { ...entry, menu: { ...menu, restaurantName } };
+  }) };
+}
+
+export function setSharedMenuId(library: MenuLibrary, id: string, snapshot: RestaurantMenu,
+  sharedMenuId: string): MenuLibrary {
+  if (!isSharedMenuId(sharedMenuId)) return library;
+  const index = library.recentMenus.findIndex((entry) => entry.id === id && entry.menu === snapshot);
+  if (index === -1 || snapshot.sharedMenuId === sharedMenuId) return library;
+  return { ...library, recentMenus: library.recentMenus.map((entry, entryIndex) => entryIndex === index
+    ? { ...entry, menu: { ...entry.menu, sharedMenuId } } : entry) };
 }
 
 export function deleteRecentMenu(library: MenuLibrary, id: string): MenuLibrary {

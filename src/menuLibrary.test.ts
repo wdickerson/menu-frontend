@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { addRecentMenu, deleteRecentMenu, getMenuChoices, getSelectedMenu, isRestaurantMenu,
-  loadMenuLibrary, renameRecentMenu, saveMenuLibrary } from './menuLibrary';
+  loadMenuLibrary, renameRecentMenu, saveMenuLibrary, setSharedMenuId } from './menuLibrary';
 
 const menu = { restaurantName: 'Captured Cafe', sections: [{ name: 'Drinks', items: ['Tea 4'] }] };
 let storage: Map<string, string>;
@@ -84,6 +84,106 @@ describe('menu library', () => {
     saveMenuLibrary(renamed);
     expect(getSelectedMenu(loadMenuLibrary())?.restaurantName).toBe('New Cafe');
     expect(renameRecentMenu(renamed, id, '  ')).toBe(renamed);
+  });
+
+  it('attaches and persists a reusable sharing ID without changing local entry metadata or selection', () => {
+    const original = addRecentMenu(loadMenuLibrary(), menu);
+    const library = { ...original, selectedId: original.recentMenus[1].id };
+    const entry = library.recentMenus[0];
+    const sharedMenuId = 'AbCdEf0123_-xy';
+    const shared = setSharedMenuId(library, entry.id, entry.menu, sharedMenuId);
+    expect(shared).not.toBe(library);
+    expect(shared.selectedId).toBe(library.selectedId);
+    expect(shared.recentMenus.map(({ id }) => id)).toEqual(library.recentMenus.map(({ id }) => id));
+    expect(shared.recentMenus[0]).toEqual({ ...entry, menu: { ...menu, sharedMenuId } });
+    expect(shared.recentMenus[0].menu.sections).toBe(entry.menu.sections);
+    expect(shared.recentMenus[1]).toBe(library.recentMenus[1]);
+    expect(entry.menu).not.toHaveProperty('sharedMenuId');
+    expect(setSharedMenuId(shared, entry.id, shared.recentMenus[0].menu, sharedMenuId)).toBe(shared);
+    expect(saveMenuLibrary(shared)).toBe(true);
+    const restored = loadMenuLibrary();
+    expect(restored).toEqual(shared);
+    expect(restored.recentMenus[0].id).toMatch(/^captured-/);
+    expect(restored.recentMenus[0].menu.sharedMenuId).toBe(sharedMenuId);
+    expect(JSON.parse(storage.get('menu-reader.menuLibrary')!).recentMenus[0].menu)
+      .toEqual({ ...menu, sharedMenuId });
+  });
+
+  it('saves a recipient menu using a local captured ID while retaining its shared ID', () => {
+    const received = { ...menu, sharedMenuId: 'AbCdEf0123_-xy' };
+    const library = addRecentMenu(loadMenuLibrary(), received);
+    expect(library.selectedId).toMatch(/^captured-/);
+    expect(library.selectedId).not.toBe(received.sharedMenuId);
+    saveMenuLibrary(library);
+    expect(getSelectedMenu(loadMenuLibrary())).toEqual(received);
+  });
+
+  it.each(['  Renamed Cafe  ', 'Captured Cafe'])('strips the shared ID on a nonblank rename to %j', (name) => {
+    const sharedMenu = { ...menu, sharedMenuId: 'AbCdEf0123_-xy' };
+    const library = addRecentMenu(loadMenuLibrary(), sharedMenu);
+    const entry = library.recentMenus[0];
+    const renamed = renameRecentMenu(library, entry.id, name);
+    expect(renamed.recentMenus[0]).toEqual({ ...entry, menu: { ...menu, restaurantName: name.trim() } });
+    expect(renamed.recentMenus[0].menu).not.toHaveProperty('sharedMenuId');
+    expect(renamed.recentMenus[0].menu.sections).toBe(sharedMenu.sections);
+    expect(renamed.recentMenus[1]).toBe(library.recentMenus[1]);
+    expect(renamed.selectedId).toBe(library.selectedId);
+    expect(sharedMenu.sharedMenuId).toBe('AbCdEf0123_-xy');
+    saveMenuLibrary(renamed);
+    expect(getSelectedMenu(loadMenuLibrary())).not.toHaveProperty('sharedMenuId');
+  });
+
+  it('keeps the shared ID on blank renames and when deleting a different local menu', () => {
+    const sharedMenu = { ...menu, sharedMenuId: 'AbCdEf0123_-xy' };
+    const library = addRecentMenu(loadMenuLibrary(), sharedMenu);
+    expect(renameRecentMenu(library, library.selectedId, ' \n ')).toBe(library);
+    const deleted = deleteRecentMenu(library, library.recentMenus[1].id);
+    expect(deleted.recentMenus[0]).toBe(library.recentMenus[0]);
+    saveMenuLibrary(deleted);
+    expect(getSelectedMenu(loadMenuLibrary())).toEqual(sharedMenu);
+  });
+
+  it.each(['', 'a'.repeat(13), 'a'.repeat(15), 'abcdefghijklm/', 'abcdefghijklm\n'])
+    ('does not change the library for invalid sharing ID %j', (sharedMenuId) => {
+      const library = addRecentMenu(loadMenuLibrary(), menu);
+      expect(setSharedMenuId(library, library.selectedId, menu, sharedMenuId)).toBe(library);
+    });
+
+  it('ignores stale share results after rename, deletion, replacement, or a local ID mismatch', () => {
+    const library = addRecentMenu(loadMenuLibrary(), menu);
+    const id = library.selectedId;
+    const sharedMenuId = 'AbCdEf0123_-xy';
+    for (const current of [renameRecentMenu(library, id, 'Renamed'),
+      renameRecentMenu(library, id, menu.restaurantName), deleteRecentMenu(library, id)]) {
+      expect(setSharedMenuId(current, id, menu, sharedMenuId)).toBe(current);
+    }
+    expect(setSharedMenuId(library, id, { ...menu }, sharedMenuId)).toBe(library);
+    expect(setSharedMenuId(library, library.recentMenus[1].id, menu, sharedMenuId)).toBe(library);
+    expect(setSharedMenuId(library, 'captured-missing', menu, sharedMenuId)).toBe(library);
+  });
+
+  it.each([null, 42, {}, [], '', 'a'.repeat(13), 'a'.repeat(15), 'abcdefghijklm/',
+    'abcdefghijklm\n'].map((sharedMenuId) => ({ sharedMenuId })))
+    ('strips malformed persisted sharedMenuId $sharedMenuId without losing a usable menu', ({ sharedMenuId }) => {
+      const library = addRecentMenu(loadMenuLibrary(), menu);
+      storage.set('menu-reader.menuLibrary', JSON.stringify({ ...library,
+        recentMenus: library.recentMenus.map((entry, index) => index === 0
+          ? { ...entry, menu: { ...entry.menu, sharedMenuId } } : entry),
+      }));
+      const restored = loadMenuLibrary();
+      expect(restored).toEqual(library);
+      expect(getSelectedMenu(restored)).not.toHaveProperty('sharedMenuId');
+      saveMenuLibrary(restored);
+      expect(JSON.parse(storage.get('menu-reader.menuLibrary')!).recentMenus[0].menu)
+        .not.toHaveProperty('sharedMenuId');
+    });
+
+  it('does not accept shared IDs as persisted local entry IDs', () => {
+    const library = addRecentMenu(loadMenuLibrary(), { ...menu, sharedMenuId: 'AbCdEf0123_-xy' });
+    saveMenuLibrary({ selectedId: 'AbCdEf0123_-xy', recentMenus: [
+      { ...library.recentMenus[0], id: 'AbCdEf0123_-xy' },
+    ] });
+    expect(loadMenuLibrary()).toEqual({ selectedId: '', recentMenus: [] });
   });
 
   it('does not restore a renamed sample or re-add it after deletion and reload', () => {

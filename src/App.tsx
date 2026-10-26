@@ -3,6 +3,8 @@ import { flushSync } from 'react-dom';
 import { version } from '../package.json';
 import type { RestaurantMenu } from './data/menus';
 import CameraCapture from './CameraCapture';
+import MenuSharing from './MenuSharing';
+import { consumeSharedMenuLink, sharedMenuIdFromPath } from './sharedMenuLink';
 import { MenuSearchPage } from './MenuSearch';
 import { createMenuSearchSession, type MenuSearchState } from './menuSearchSession';
 import { createMenuProcessingSession, type MenuProcessingJob, type MenuProcessingState } from './menuProcessingSession';
@@ -11,7 +13,7 @@ import { keepScreenAwake } from './screenWakeLock';
 import { createBoundaryThump } from './boundaryThump';
 import { createAppNavigation, type AppRoute } from './appNavigation';
 import { addRecentMenu, deleteRecentMenu, getMenuChoices, getSelectedMenu, loadMenuLibrary,
-  renameRecentMenu, saveMenuLibrary,
+  renameRecentMenu, saveMenuLibrary, setSharedMenuId,
   type MenuLibrary } from './menuLibrary';
 
 type MenuSection = RestaurantMenu['sections'][number];
@@ -467,6 +469,8 @@ Double tap to change reading speed.`}
 
 type MenuPageProps = {
   menu: RestaurantMenu | null;
+  menuLocalId: string;
+  onShared: (snapshot: RestaurantMenu, id: string) => boolean;
   onCaptureMenu: () => void;
   onSearchMenu: () => void;
   onSelectRestaurant: () => void;
@@ -481,7 +485,7 @@ type MenuPageProps = {
   onDismissProcessingError: () => void;
 };
 
-function MenuPage({ menu, onCaptureMenu, onSearchMenu, onSelectRestaurant, onEnterQuickNav, focusTarget,
+function MenuPage({ menu, menuLocalId, onShared, onCaptureMenu, onSearchMenu, onSelectRestaurant, onEnterQuickNav, focusTarget,
   storageWarning, processing, processingError, processingKind, onRetryProcessing, onCancelProcessing,
   onDismissProcessingError }: MenuPageProps) {
   const captureButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -523,21 +527,25 @@ function MenuPage({ menu, onCaptureMenu, onSearchMenu, onSelectRestaurant, onEnt
         <button className="menu-button" type="button" ref={loadButtonRef} disabled={processing} onClick={onSelectRestaurant}>
           Reload a Recent Menu
         </button>
+        <MenuSharing key={menuLocalId} menu={menu} disabled={processing} onShared={onShared} />
         <button className="menu-button" type="button" ref={quickNavButtonRef} disabled={processing || !menu} onClick={onEnterQuickNav}>
           Enter Quick Nav Mode
         </button>
         {storageWarning && <p className="storage-warning" role="alert">{storageWarning}</p>}
         {processing && <section className="processing-panel" aria-labelledby="processing-title">
-          <h2 id="processing-title" ref={processingHeadingRef} tabIndex={-1}>Processing your menu…</h2>
+          <h2 id="processing-title" ref={processingHeadingRef} tabIndex={-1}>{processingKind === 'shared'
+            ? 'Loading shared menu…' : 'Processing your menu…'}</h2>
           <div role="status">
             <span className="processing-indicator" aria-hidden="true" />
-            <p>This may take 20 seconds or longer. Please keep this page open while the menu is being processed.</p>
+            <p>{processingKind === 'shared' ? 'Please keep this page open while the shared menu loads.'
+              : 'This may take 20 seconds or longer. Please keep this page open while the menu is being processed.'}</p>
           </div>
           <button className="menu-button" type="button" onClick={onCancelProcessing}>Cancel processing</button>
         </section>}
         {processingError && <section className="processing-panel">
           <div ref={processingErrorRef} role="alert" tabIndex={-1}><p>{processingError}</p></div>
-          <p>{menu && 'Your previous menu is still available. '}{processingKind === 'online'
+          <p>{menu && 'Your previous menu is still available. '}{processingKind === 'shared'
+            ? 'You can retry this shared link or load another menu.' : processingKind === 'online'
             ? 'You can retry the selected online menu or search for another match.'
             : 'You can retry using the same photos or capture a new menu.'}</p>
           <div className="processing-error-actions">
@@ -671,6 +679,8 @@ function RestaurantSelection({ library, onSelect, onClose, onRename, onDelete, s
 
 function App() {
   const [library, setLibrary] = useState<MenuLibrary>(loadMenuLibrary);
+  const libraryRef = useRef(library);
+  const [incomingSharedMenuId] = useState(() => sharedMenuIdFromPath(window.location.pathname, import.meta.env.BASE_URL));
   const [route, setRoute] = useState<AppRoute>({ screen: 'menu' });
   const screen = route.screen;
   const routeRef = useRef(route);
@@ -680,7 +690,11 @@ function App() {
   const [storageWarning, setStorageWarning] = useState('');
   const [processingState, setProcessingState] = useState<MenuProcessingState>({ status: 'idle' });
   const [processingSession] = useState(() => createMenuProcessingSession(setProcessingState, (menu) => {
-    setLibrary((current) => addRecentMenu(current, menu));
+    const next = updateLibrary((current) => addRecentMenu(current, menu));
+    // Keep the incoming URL recoverable when browser storage is blocked/full.
+    if (menu.sharedMenuId === incomingSharedMenuId && saveMenuLibrary(next)) {
+      consumeSharedMenuLink(window, import.meta.env.BASE_URL);
+    }
     setFocusTarget('load');
   }));
   const processingReturnRef = useRef(false);
@@ -688,6 +702,13 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchState, setSearchState] = useState<MenuSearchState>({ status: 'idle' });
   const [searchSession] = useState(() => createMenuSearchSession(setSearchState));
+
+  function updateLibrary(update: (current: MenuLibrary) => MenuLibrary) {
+    const next = update(libraryRef.current);
+    libraryRef.current = next;
+    setLibrary(next);
+    return next;
+  }
 
   useEffect(() => installSpeechWarmup(document, window.speechSynthesis), []);
 
@@ -717,6 +738,11 @@ function App() {
     processingSession.dispose();
   }, [searchSession, processingSession]);
 
+  useEffect(() => {
+    if (incomingSharedMenuId) processingSession.start({ kind: 'shared', menuId: incomingSharedMenuId });
+    return () => processingSession.cancel(false);
+  }, [incomingSharedMenuId, processingSession]);
+
   function processMenu(job: MenuProcessingJob) {
     if (!processingSession.start(job)) return;
     processingReturnRef.current = routeRef.current.screen !== 'menu';
@@ -725,7 +751,8 @@ function App() {
   }
 
   function cancelProcessing() {
-    const target = processingState.status !== 'idle' && processingState.kind === 'online' ? 'search' : 'capture';
+    const target = processingState.status !== 'idle' && processingState.kind === 'shared' ? 'load'
+      : processingState.status !== 'idle' && processingState.kind === 'online' ? 'search' : 'capture';
     processingSession.cancel();
     setFocusTarget(target);
   }
@@ -772,15 +799,15 @@ function App() {
         action={action}
         onAction={({ id, kind }) => navigationRef.current?.navigate({ screen: 'selection', action: { id, kind } })}
         onCloseAction={() => navigationRef.current?.back()}
-        onRename={(id, name) => setLibrary((current) => renameRecentMenu(current, id, name))}
+        onRename={(id, name) => updateLibrary((current) => renameRecentMenu(current, id, name))}
         onDelete={(id) => {
-          setLibrary((current) => deleteRecentMenu(current, id));
+          updateLibrary((current) => deleteRecentMenu(current, id));
           if (id === library.selectedId) {
             navigationRef.current?.home();
           }
         }}
         onSelect={(id) => {
-        setLibrary((current) => ({ ...current, selectedId: id }));
+        updateLibrary((current) => ({ ...current, selectedId: id }));
         navigationRef.current?.home();
       }} onClose={() => navigationRef.current?.home()} />
     );
@@ -801,6 +828,16 @@ function App() {
   return (
     <MenuPage
       menu={selectedMenu}
+      menuLocalId={library.selectedId}
+      onShared={(snapshot, id) => {
+        const current = libraryRef.current;
+        const next = setSharedMenuId(current, library.selectedId, snapshot, id);
+        if (next === current) return false;
+        updateLibrary(() => next);
+        // Persist before native sharing, even if the user cancels the share sheet.
+        if (!saveMenuLibrary(next)) setStorageWarning('Your share link is available for this session, but could not be saved on this device.');
+        return true;
+      }}
       focusTarget={focusTarget}
       storageWarning={storageWarning}
       processing={processingState.status === 'loading'}

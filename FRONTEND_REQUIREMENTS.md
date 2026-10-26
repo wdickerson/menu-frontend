@@ -63,3 +63,25 @@
 	previous button height rather than full width.
 - Cycle speech rates through 1, 1.25, 1.5, 1.75, 2, and 2.5×; retain the default of 1.5×.
 - Show “Menu Reader v2.0.0” only in the subtle Recent Menus footer.
+
+
+# Menu Reader frontend requirements — v2.1.0
+
+
+**Implement "Share This Menu" functionality using the two new API enpoints:**
+
+POST /transcribed_menu
+GET /transcribed_menu/<menu_id>
+
+Add a button above "Enter Quick Nav Mode" that is labeled "Share This Menu". When the button is clicked, POST the currently loaded menu to the API. When the API returns:
+-Update localStorage to include this Identifier as sharedMenuId. This is a key in the JSON of the next to restaurantName.
+-Use the Web Share API to initiate a share action with the link "menu.littleapp.io/<menu_id>"
+-Note: if the menu has been shared before, it should have its ID in localStorage as sharedMenuId, so that it doesn't need to be POSTed
+
+For the recipient, when navigating to "menu.littleapp.io/<menu_id>", perform a GET to retrieve the menu, load it, and save it to localStorage. The menu ID should also be saved to localStorage, so that if this user now shares it, a POST is not needed.
+
+When a user deletes a menu, do not delete it from DynamoDB; only delete it from localStorage
+
+When a user renames a menu, do not rename it in DynamoDB, only locally. However, delete the sharedMenuId property of this menu in localStorage, so that a subsequent share action would share the menu with its new name.
+
+Only perform the POST when a user initiates an intent to share. Most menus will only live locally.

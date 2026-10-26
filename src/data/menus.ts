@@ -2,6 +2,7 @@ import roughAndTumbleMenu from './rough-and-tumble-menu.json';
 
 export type RestaurantMenu = {
   restaurantName: string;
+  sharedMenuId?: string;
   sections: {
     name: string;
     items: string[];

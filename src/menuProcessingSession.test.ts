@@ -22,7 +22,8 @@ function harness() {
   const onChange = vi.fn();
   const onMenu = vi.fn();
   const requests = { images: vi.fn(async (_images: Blob[], _signal: AbortSignal) => pending.promise),
-    online: vi.fn(async (_query: string, _menu: PossibleMenu, _signal: AbortSignal) => pending.promise) };
+    online: vi.fn(async (_query: string, _menu: PossibleMenu, _signal: AbortSignal) => pending.promise),
+    shared: vi.fn(async (_id: string, _signal: AbortSignal) => pending.promise) };
   const session = createMenuProcessingSession(onChange, onMenu, requests);
   return { session, pending, requests, onChange, onMenu };
 }
@@ -32,6 +33,64 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
 describe('shared menu processing lifecycle', () => {
+  it('loads a shared-link snapshot through GET without transcription and preserves its identifier', async () => {
+    const test = harness();
+    const input: MenuProcessingJob = { kind: 'shared', menuId: 'rP_KAcJggGmj1w' };
+    expect(test.session.start(input)).toBe(true);
+    expect(test.session.start(input)).toBe(false);
+    input.menuId = 'mfEQ80qbbkDBTg';
+    expect(test.requests.shared).toHaveBeenCalledExactlyOnceWith('rP_KAcJggGmj1w', expect.any(AbortSignal));
+    expect(test.requests.images).not.toHaveBeenCalled();
+    expect(test.requests.online).not.toHaveBeenCalled();
+    const sharedMenu = { ...menu, sharedMenuId: 'rP_KAcJggGmj1w' };
+    test.pending.resolve(sharedMenu);
+    await flush();
+    expect(test.onMenu).toHaveBeenCalledExactlyOnceWith(sharedMenu);
+    expect(test.onChange).toHaveBeenLastCalledWith({ status: 'idle' });
+    expect(test.session.retry()).toBe(false);
+  });
+
+  it('retries a failed shared GET without starting paid requests', async () => {
+    const test = harness();
+    test.requests.shared.mockRejectedValueOnce(new Error('Shared menu not found'));
+    test.session.start({ kind: 'shared', menuId: 'rP_KAcJggGmj1w' });
+    await flush();
+    expect(test.onChange).toHaveBeenLastCalledWith({ status: 'error', kind: 'shared', message: 'Shared menu not found' });
+    expect(test.onMenu).not.toHaveBeenCalled();
+    expect(test.session.retry()).toBe(true);
+    test.pending.resolve(menu);
+    await flush();
+    expect(test.requests.shared).toHaveBeenCalledTimes(2);
+    expect(test.requests.images).not.toHaveBeenCalled();
+    expect(test.requests.online).not.toHaveBeenCalled();
+    expect(test.onMenu).toHaveBeenCalledExactlyOnceWith(menu);
+  });
+
+  it.each(['cancel', 'dispose'] as const)('ignores late shared-link results after %s', async (action) => {
+    const test = harness();
+    test.session.start({ kind: 'shared', menuId: 'rP_KAcJggGmj1w' });
+    const signal = test.requests.shared.mock.calls[0][1];
+    test.session[action]();
+    expect(signal.aborted).toBe(true);
+    test.pending.resolve(menu);
+    await flush();
+    expect(test.onMenu).not.toHaveBeenCalled();
+    expect(test.session.retry()).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('times out shared-link loading and ignores its late result', async () => {
+    const test = harness();
+    test.session.start({ kind: 'shared', menuId: 'rP_KAcJggGmj1w' });
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(test.requests.shared.mock.calls[0][1].aborted).toBe(true);
+    expect(test.onChange).toHaveBeenLastCalledWith({ status: 'error', kind: 'shared',
+      message: 'Reading the menu took too long. Please retry or choose another menu.' });
+    test.pending.resolve(menu);
+    await flush();
+    expect(test.onMenu).not.toHaveBeenCalled();
+  });
+
   it('loads one selected menu using a snapshot of the original query and suppresses duplicates', async () => {
     const test = harness();
     const input = structuredClone(onlineJob);
