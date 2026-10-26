@@ -1,4 +1,4 @@
-# Menu Reader frontend v1.3.0
+# Menu Reader frontend v1.3.1
 
 React/TypeScript/Vite app for capturing menus, saving them locally, and reading
 them with a screen reader or spoken Quick Nav gestures. Web search finds candidate
@@ -33,7 +33,8 @@ npm run dev
 	home until a new search is submitted; clearing or editing the draft keeps results.
 	Back returns home and cancels any pending search. Back/Forward never silently
 	repeats paid requests. Queries and results remain memory-only and reset on refresh.
-- Results include a separate clickable menu-source citation from each result's
+- Each result is a non-clickable card with a “Load this Menu” button and a
+	menu-source link directly below the description. The link uses the result's
 	`source_url` field, never from `agent_instructions`. Unsafe or blank source links
 	are hidden without rejecting the result. Private agent extraction instructions
 	are never rendered. Deploy the API and frontend together for this four-field contract.

@@ -34,50 +34,32 @@
 - Recent Menus offers Load, Rename, and confirmed Delete; show capture dates below names.
 	Deleting the selected menu leaves none loaded and disables Quick Nav until another is loaded.
 
-# Menu Reader frontend requirements — v1.1.0
+# Menu Reader frontend requirements — v2.0.0
 
-Introduce a new method by which users can find a menu and transcribe it: Web search
+## Online search and loading
 
-Under the "Capture a new menu" button, add a button: "Search the web for a menu"
+- Label the first two home actions “Capture a Menu with Camera” and “Search for a Menu Online”.
+	Send image transcription requests to `/menu_image_transcribe`.
+- Online search uses one page for the query and results, with instructions:
+	“Describe the menu you are looking for. Be specific (ie, Rough & Tumble Columbia City dinner menu).”
+	Include a query input, an “x” clear control on its right, Search, and Back.
+- Search posts the query to `/menu_online_search` and shows a loading state, followed by
+	“Found X possible matches. Select one to load” or “Could not find a menu”. Retain results
+	until another query is made, including when navigating home and back to search.
+- Each result card shows the venue and menu identifiers, a source link just below the
+	menu description, and a “Load this Menu” button. The card itself is not clickable.
+- Use only `source_url` for the source link; hide blank or unusable links without rejecting
+	the result. Never display `agent_instructions` or extract links from it.
+- “Load this Menu” posts the original search query and selected result's four fields
+	(`venue_identifier`, `menu_identifier`, `source_url`, `agent_instructions`) to
+	`/menu_online_transcribe` as `{"query":"original query","menu":{...}}`.
+- While transcription is pending, show processing feedback like image transcription.
+	On success, load the menu and save it to localStorage using the existing menu library flow.
 
-Clicking this button starts a new, two-step user flow. In v1.1.0, we are just implementing the first step of the flow:
+## Quick Nav and version display
 
-Clicking "Search the web for a menu" opens a new page with:
-  -text instructions: "Describe the menu you are looking for. Be specific (ie, Rough & Tumble Columbia City dinner menu)."
-  -an input field for user input
-  -a Search button that sends the query to the `/menu_online_search` endpoint
-  -a Back button that goes back
-
-Clicking "Search" sends the query and opens a new page with a loading state. Once the API returns, the 1 to 8 options are displayed, below the text "Found X possible matches. Select one to load". Or it can display "Could not find a menu". Possible menues are shown in clickable cards with their venue identifier and menu identifier. Agent instruction is not shown. There is a back button at the bottom that return to the search page.
-
-We will implement menu loading in a later version.
-
-Each result also includes `source_url`. Display a separate source link using that attribute, without extracting URLs from `agent_instructions`. Keep agent instructions hidden for the future transcription agent. Blank or unusable source URLs hide the link without rejecting the menu result.
-
-# Menu Reader frontend requirements — v1.2.0
-
-Building on v1.1.0, allow a user to load a menu form the search results page.
-
-When a user clicks on the menu, send a POST the `/menu_online_transcribe` endpoint with the three API-provided parameters, as well as the original search query. (The original search query is provided in case it helps the agent determine the venue name).
-
-While the POST is pending, show a screen similar to when the user is waiting for image transcription. Consider using a shared componenent, but only if that makes sense.
-
-When the POST returns, load the menu and save it to localStorage, just as we do for image transcription.
-
-
-# Menu Reader frontend requirements — v1.2.1
-
-Keep screen awake while in quick nav mode, even if the user seems to be inactive
-
-Make the Exit Quick Nav Mode button smaller. Make it more like link text, about half of its current height, aligned to the right of the page, not full width.
-
-Change speed setting tap value to be: 1, 1.25, 1.5, 1.75, 2, 2.5
-
-# Menu Reader frontend requirements — v1.3.0
-
-Make the web search page and the search results page one single page, and retain the search results until another query is made, even if a user navigates to the homepage and then back to web search. Place an "x" in the input box, on the right, to clear the current search term.
-
-On the home page, make the text in the first two buttons:
-"Capture a Menu with Camera"
-"Search for a Menu Online"
-
+- Keep the screen awake in Quick Nav, including while the user is inactive.
+- Make “Exit Quick Nav Mode” a compact, right-aligned, link-like control, about half the
+	previous button height rather than full width.
+- Cycle speech rates through 1, 1.25, 1.5, 1.75, 2, and 2.5×; retain the default of 1.5×.
+- Show “Menu Reader v2.0.0” only in the subtle Recent Menus footer.

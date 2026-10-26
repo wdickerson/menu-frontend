@@ -70,16 +70,18 @@ function MenuSearchResults({ state, onLoad }: {
     {menus.length > 0 && <div className="restaurant-options" aria-label="Possible menus">
       {menus.map((menu, index) => {
         const sourceUrl = menuSourceUrl(menu);
-        return <article className="search-match" key={index}>
-          <button className="menu-button search-result-card" type="button"
-            onClick={() => { if (state.status === 'complete') onLoad(state.query, menu); }}>
-            <span className="search-venue">{menu.venue_identifier}</span>
-            <span className="search-menu">{menu.menu_identifier}</span>
-          </button>
+        return <article className="search-match search-result-card" key={index}
+          aria-labelledby={`search-match-${index}`}>
+          <h3 className="search-venue" id={`search-match-${index}`}>{menu.venue_identifier}</h3>
+          <p className="search-menu">{menu.menu_identifier}</p>
           {sourceUrl && <a className="search-source" href={sourceUrl} target="_blank" rel="noopener noreferrer"
             aria-label={`Menu source for ${menu.venue_identifier}, ${menu.menu_identifier} (opens in a new tab)`}>
             Menu source (opens in a new tab)
           </a>}
+          <button className="menu-button primary-button" type="button"
+            onClick={() => { if (state.status === 'complete') onLoad(state.query, menu); }}>
+            Load this Menu
+          </button>
         </article>;
       })}
     </div>}

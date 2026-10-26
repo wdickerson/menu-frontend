@@ -43,6 +43,27 @@ describe('unified menu search page', () => {
     expect(html).toContain('type="submit" disabled=""');
   });
 
+  it('places the description, source link, and explicit load button inside a non-clickable card', () => {
+    const html = render({ status: 'complete', query: 'Dinner', menus: [menu] });
+    const card = html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/)?.[1] ?? '';
+    expect(card).toContain('<h3 class="search-venue" id="search-match-0">Example Restaurant</h3>');
+    expect(card).toContain('<p class="search-menu">Dinner</p>');
+    expect(card).toContain('target="_blank" rel="noopener noreferrer"');
+    expect(card.indexOf('</p>')).toBeLessThan(card.indexOf('<a '));
+    expect(card.indexOf('</a>')).toBeLessThan(card.indexOf('<button '));
+    expect(card).toMatch(/<button[^>]*type="button"[^>]*>Load this Menu<\/button>/);
+    expect(card.match(/<button\b/g)).toHaveLength(1);
+    expect(html).toContain('aria-labelledby="search-match-0"');
+  });
+
+  it('gives every result its own load button, including results without source links', () => {
+    const html = render({ status: 'complete', query: 'Dinner', menus: [menu, { ...menu, source_url: '' }] });
+    expect(html.match(/>Load this Menu<\/button>/g)).toHaveLength(2);
+    expect(html.match(/<a\b/g)).toHaveLength(1);
+    expect(html).toContain('aria-labelledby="search-match-1"');
+    expect(html).not.toContain(menu.agent_instructions);
+  });
+
   it('offers a labeled non-submit clear button for a nonempty draft', () => {
     const html = render({ status: 'idle' }, 'Dinner');
     expect(html).toContain('class="search-clear" type="button" aria-label="Clear search term"');
