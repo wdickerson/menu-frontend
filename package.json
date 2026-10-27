@@ -1,7 +1,7 @@
 {
   "name": "menu-reader",
   "private": true,
-  "version": "2.1.0",
+  "version": "2.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -10,6 +10,9 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@fortawesome/fontawesome-svg-core": "^7.3.1",
+    "@fortawesome/free-brands-svg-icons": "^7.3.1",
+    "@fortawesome/react-fontawesome": "^3.5.0",
     "react": "latest",
     "react-dom": "latest"
   },
@@ -17,6 +20,7 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^27.0.1",
     "typescript": "latest",
     "vite": "^6.0.0",
     "vitest": "^4.1.12"

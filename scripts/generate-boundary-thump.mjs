@@ -30,7 +30,8 @@ for (let sample = 0; sample < sampleCount; sample += 1) {
     : time < 0.18
       ? 0.6 * (0.0001 / 0.6) ** ((time - 0.012) / 0.168)
       : 0.0001 * (duration - time) / 0.02;
-  wav.writeInt16LE(Math.round(Math.sin(phase) * gain * 32767), 44 + sample * 2);
+  // 1.5x the original amplitude, retaining the tuned envelope without clipping.
+  wav.writeInt16LE(Math.round(Math.sin(phase) * gain * 1.5 * 32767), 44 + sample * 2);
   phase += 2 * Math.PI * frequency / sampleRate;
 }
 

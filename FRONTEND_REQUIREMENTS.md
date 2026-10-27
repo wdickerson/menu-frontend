@@ -73,7 +73,15 @@
 POST /transcribed_menu
 GET /transcribed_menu/<menu_id>
 
-Add a button above "Enter Quick Nav Mode" that is labeled "Share This Menu". When the button is clicked, POST the currently loaded menu to the API. When the API returns:
+Keep Capture, Search, and Reload above the loaded menu title. Below the title, show
+"Enter Quick Nav Mode" followed by "Share This Menu". Capture and Quick Nav use the
+primary dark green style; Search, Reload, and Share use the lighter secondary style.
+Separate the loaded menu title from the top actions with extra vertical space and a
+horizontal divider. When no menu is loaded, show explanatory guidance in its place
+with the same divider and generous line spacing. Keep Quick Nav and Share disabled,
+using lighter text, borders, and backgrounds to distinguish unavailable controls.
+
+When "Share This Menu" is clicked, POST the currently loaded menu to the API. When the API returns:
 -Update localStorage to include this Identifier as sharedMenuId. This is a key in the JSON of the next to restaurantName.
 -Use the Web Share API to initiate a share action with the link "menu.littleapp.io/<menu_id>"
 -Note: if the menu has been shared before, it should have its ID in localStorage as sharedMenuId, so that it doesn't need to be POSTed
@@ -85,3 +93,11 @@ When a user deletes a menu, do not delete it from DynamoDB; only delete it from 
 When a user renames a menu, do not rename it in DynamoDB, only locally. However, delete the sharedMenuId property of this menu in localStorage, so that a subsequent share action would share the menu with its new name.
 
 Only perform the POST when a user initiates an intent to share. Most menus will only live locally.
+
+# Menu Reader frontend requirements — v2.1.1
+
+Make the end-of-list thump about 50% louder
+
+Support Quick Nav with up/down left/right arrow keys, so that quick nav can be used on non-touchscreens. Single click repeats; double click changes reading speed. Keep the touch gestures exactly as they are.
+
+When any text is read aloud (either a section or an item), replace the quick nav instruction text with what was read aloud. Be sure to not allow any scrolling on this page, even if the item text is exceptionally long and overflows its container. When a user hits a "thump", do not update the text. When a user exits quick nav mode and then returns to it, display the instructions once again.

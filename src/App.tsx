@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type TouchEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type TouchEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { version } from '../package.json';
 import type { RestaurantMenu } from './data/menus';
 import CameraCapture from './CameraCapture';
 import MenuSharing from './MenuSharing';
+import SiteFooter from './SiteFooter';
 import { consumeSharedMenuLink, sharedMenuIdFromPath } from './sharedMenuLink';
 import { MenuSearchPage } from './MenuSearch';
 import { createMenuSearchSession, type MenuSearchState } from './menuSearchSession';
@@ -44,6 +45,13 @@ const TAP_MAX_MOVE = 18;
 const TAP_MAX_DURATION = 350;
 const DOUBLE_TAP_WINDOW = 350;
 const DOUBLE_TAP_MAX_DISTANCE = 40;
+const MOUSE_CLICK_WINDOW = 600;
+const QUICK_NAV_INSTRUCTIONS = `This is the Quick Nav page.
+Turn off screen readers to enable quick nav gestures.
+Flick up/down or use the up/down arrow keys to navigate menu sections.
+Flick left/right or use the left/right arrow keys to navigate items.
+Tap or click to repeat.
+Double tap or double click to change reading speed.`;
 
 function readSavedPreference(key: string) {
   try {
@@ -115,8 +123,11 @@ type QuickNavProps = {
   onExit: () => void;
 };
 
-function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProps) {
+export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProps) {
+  const [displayText, setDisplayText] = useState(QUICK_NAV_INSTRUCTIONS);
   const gestureAreaRef = useRef<HTMLDivElement | null>(null);
+  const mouseTimerRef = useRef<number | null>(null);
+  const pointerTypeRef = useRef('mouse');
   const speechRateRef = useRef(speechRate);
   const pendingTapRef = useRef<PendingTap | null>(null);
   const adjustingSpeedRef = useRef(false);
@@ -144,6 +155,7 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
       if (pendingTapRef.current) {
         window.clearTimeout(pendingTapRef.current.timerId);
       }
+      clearMouseClick();
 
       // Strict Mode's initial cleanup must not cancel the app's warm-up.
       if (hasSpokenRef.current) window.speechSynthesis?.cancel();
@@ -164,6 +176,7 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
   }
 
   function speakMenuText(text: string, target: NavigationTarget) {
+    setDisplayText(text);
     lastUtteranceRef.current = text;
     lastUtteranceTargetRef.current = target;
     readSlotsRef.current[target] = true;
@@ -218,6 +231,7 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
 
     if (target !== null) {
       readSlotsRef.current[target] = true;
+      setDisplayText(lastUtteranceRef.current);
     }
 
     speakQuickNav(lastUtteranceRef.current, speechRateRef.current);
@@ -242,11 +256,12 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
 
   function endSpeedAdjustment() {
     clearPendingTap();
+    clearMouseClick();
     adjustingSpeedRef.current = false;
   }
 
-  function announceSpeed() {
-    if (adjustingSpeedRef.current) {
+  function announceSpeed(advance = false) {
+    if (advance || adjustingSpeedRef.current) {
       const nextIndex = (SPEECH_RATES.indexOf(speechRateRef.current) + 1) % SPEECH_RATES.length;
       speechRateRef.current = SPEECH_RATES[nextIndex];
       onSpeechRateChange(speechRateRef.current);
@@ -257,6 +272,51 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
     lastUtteranceRef.current = text;
     lastUtteranceTargetRef.current = null;
     speakQuickNav(text, speechRateRef.current);
+  }
+
+  function clearMouseClick() {
+    if (mouseTimerRef.current !== null) {
+      window.clearTimeout(mouseTimerRef.current);
+      mouseTimerRef.current = null;
+    }
+  }
+
+  function isTouchClick(event: MouseEvent<HTMLElement>) {
+    const native = event.nativeEvent as globalThis.MouseEvent & {
+      sourceCapabilities?: { firesTouchEvents?: boolean };
+    };
+    return pointerTypeRef.current === 'touch' || native.sourceCapabilities?.firesTouchEvents === true;
+  }
+
+  function handleClick(event: MouseEvent<HTMLElement>) {
+    if (isTouchClick(event)) return;
+    clearMouseClick();
+    if (event.detail > 1) return;
+    mouseTimerRef.current = window.setTimeout(() => {
+      mouseTimerRef.current = null;
+      endSpeedAdjustment();
+      readLastUtterance();
+    }, MOUSE_CLICK_WINDOW);
+  }
+
+  function handleDoubleClick(event: MouseEvent<HTMLElement>) {
+    if (isTouchClick(event)) return;
+    clearMouseClick();
+    clearPendingTap();
+    announceSpeed(true);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const directions = {
+      ArrowDown: ['section', 1], ArrowUp: ['section', -1],
+      ArrowRight: ['item', 1], ArrowLeft: ['item', -1],
+    } as const;
+    const direction = directions[event.key as keyof typeof directions];
+    if (!direction) return;
+    event.preventDefault();
+    endSpeedAdjustment();
+    navigateGestureTarget(direction[0], direction[1]);
   }
 
   function handleSingleFingerTap(gesture: TouchGesture) {
@@ -328,6 +388,8 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
   }
 
   function handleTouchStart(event: TouchEvent<HTMLElement>) {
+    pointerTypeRef.current = 'touch';
+    clearMouseClick();
     // Button touches must not repeat speech or change the reading speed.
     if ((event.target as Element).closest('button') || event.touches.length !== 1) {
       endSpeedAdjustment();
@@ -438,7 +500,7 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
   }
 
   return (
-    <main className="screen quick-nav-screen" aria-label="Quick Nav Mode">
+    <main className="screen quick-nav-screen" aria-label="Quick Nav Mode" onKeyDown={handleKeyDown}>
       <div
         className="reader-panel gesture-area"
         ref={gestureAreaRef}
@@ -447,17 +509,16 @@ function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProp
         aria-describedby="quick-nav-instructions"
         tabIndex={-1}
         onContextMenu={(event) => event.preventDefault()}
+        onPointerDown={(event) => { pointerTypeRef.current = event.pointerType; }}
+        onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchCancel}
       >
         <p id="quick-nav-instructions" className="quick-nav-instructions">
-          {`This is the Quick Nav page.
-Turn off screen readers to enable quick nav gestures.
-Flick up/down to navigate menu sections.
-Flick left/right to navigate items.
-Double tap to change reading speed.`}
+          {displayText}
         </p>
       </div>
       <button className="menu-button exit-quick-nav" type="button" onClick={onExit}>
@@ -521,15 +582,11 @@ function MenuPage({ menu, menuLocalId, onShared, onCaptureMenu, onSearchMenu, on
         <button className="menu-button primary-button" type="button" ref={captureButtonRef} disabled={processing} onClick={onCaptureMenu}>
           Capture a Menu with Camera
         </button>
-        <button className="menu-button primary-button" type="button" ref={searchButtonRef} disabled={processing} onClick={onSearchMenu}>
+        <button className="menu-button" type="button" ref={searchButtonRef} disabled={processing} onClick={onSearchMenu}>
           Search for a Menu Online
         </button>
         <button className="menu-button" type="button" ref={loadButtonRef} disabled={processing} onClick={onSelectRestaurant}>
           Reload a Recent Menu
-        </button>
-        <MenuSharing key={menuLocalId} menu={menu} disabled={processing} onShared={onShared} />
-        <button className="menu-button" type="button" ref={quickNavButtonRef} disabled={processing || !menu} onClick={onEnterQuickNav}>
-          Enter Quick Nav Mode
         </button>
         {storageWarning && <p className="storage-warning" role="alert">{storageWarning}</p>}
         {processing && <section className="processing-panel" aria-labelledby="processing-title">
@@ -553,8 +610,16 @@ function MenuPage({ menu, menuLocalId, onShared, onCaptureMenu, onSearchMenu, on
             <button className="menu-button" type="button" onClick={onDismissProcessingError}>Dismiss</button>
           </div>
         </section>}
-        {!processing && !menu && <p>No menu loaded. Capture a new menu or reload a recent menu to begin.</p>}
+        {!processing && !menu && <p className="menu-empty-message">
+          Use the options above to load a menu. You can capture a menu with your phone’s camera,
+          search for a menu online, or reload a recent menu. Once loaded, the menu will appear
+          on this page. Use the buttons below the menu title to open Quick Nav Mode or share the menu.
+        </p>}
         {!processing && menu && <h2 className="menu-restaurant-name">{menu.restaurantName}</h2>}
+        <button className="menu-button primary-button" type="button" ref={quickNavButtonRef} disabled={processing || !menu} onClick={onEnterQuickNav}>
+          Enter Quick Nav Mode
+        </button>
+        <MenuSharing key={menuLocalId} menu={menu} disabled={processing} onShared={onShared} />
         {!processing && menu?.sections.map((section, sectionIndex) => (
           <section className="menu-section" key={sectionIndex} aria-labelledby={`menu-section-${sectionIndex}`}>
             <h3 id={`menu-section-${sectionIndex}`}>{section.name}</h3>
@@ -826,6 +891,7 @@ function App() {
   }
 
   return (
+    <div className="home-page">
     <MenuPage
       menu={selectedMenu}
       menuLocalId={library.selectedId}
@@ -867,6 +933,8 @@ function App() {
         navigationRef.current?.navigate({ screen: 'selection' });
       }}
     />
+      <SiteFooter />
+    </div>
   );
 }
 

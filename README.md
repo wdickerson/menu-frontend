@@ -1,9 +1,31 @@
-# Menu Reader frontend v2.1.0
+# Menu Reader frontend v2.1.1
 
 React/TypeScript/Vite app for capturing menus, saving them locally, and reading
 them with a screen reader or spoken Quick Nav gestures. Web search finds candidate
 menus; selecting one transcribes, loads, and saves it to Recent Menus.
 See [FRONTEND_REQUIREMENTS.md](FRONTEND_REQUIREMENTS.md) for current behavior.
+
+## Home page
+
+- Capture, Search, and Reload appear above the loaded menu title. A horizontal
+	divider and extra spacing separate these actions from the menu.
+- **Enter Quick Nav Mode** appears directly below the title, followed by
+	**Share This Menu**. Capture and Quick Nav are dark green primary actions;
+	the other actions use the lighter secondary style.
+- With no menu loaded, explanatory guidance replaces the title and menu contents.
+	Quick Nav and Share remain disabled with lighter text, borders, and backgrounds.
+- The home footer includes creator and social links. The application version
+	remains in the Recent Menus footer.
+
+## Quick Nav
+
+- Flick or use arrow keys: up/down for sections, left/right for items.
+- Tap or single-click to repeat. Touch double-taps retain their existing speed
+	announcement/cycling behavior; each mouse double-click changes the speed.
+- Spoken sections/items replace the instructions; boundary thumps and speed
+	announcements leave that text unchanged. Reentering restores the instructions.
+- Long text is clipped rather than scrolled. The boundary recording has 50% more
+	amplitude without clipping; audible loudness still needs real-device checks.
 
 ## Sharing
 
@@ -68,7 +90,10 @@ npm run dev
 	separate `EnableLiveSearch` flag. Deploy the new gateway route and API code
 	before the frontend; this release does not add a new enablement flag.
 - Vite configuration is public and baked into builds: never include provider keys.
-	Remove local endpoint overrides before deployment. Phone loopback refers to the phone.
+	Remove local endpoint overrides before deployment, or explicitly set `VITE_MENU_API_URL`
+	in the build environment to the intended production image endpoint. A root-base build
+	alone still loads local dotenv overrides. CodeBuild explicitly supplies the production
+	endpoint. Phone loopback refers to the phone.
 - Use HTTPS in production and verify API CORS for the frontend origin.
 - Run tests before release: deployment builds/type-checks and uploads to S3, but does
 	not run tests. Run `npm ci`, `npm test`, `npm audit`, and
