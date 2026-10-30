@@ -2,6 +2,30 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 describe('bundled thump recording', () => {
+  it('provides a louder, non-clipping iOS variant with the same duration and sweep', () => {
+    const standard = readFileSync(new URL('../public/assets/boundary-thump.wav', import.meta.url));
+    const ios = readFileSync(new URL('../public/assets/boundary-thump-ios.wav', import.meta.url));
+    expect(ios.subarray(0, 44)).toEqual(standard.subarray(0, 44));
+    expect(ios.length).toBe(standard.length);
+    let standardEnergy = 0;
+    let iosEnergy = 0;
+    let peak = 0;
+    for (let offset = 44; offset < standard.length; offset += 2) {
+      const original = standard.readInt16LE(offset);
+      const louder = ios.readInt16LE(offset);
+      expect(Math.abs(louder)).toBeGreaterThanOrEqual(Math.abs(original));
+      if (original !== 0) expect(Math.sign(louder)).toBe(Math.sign(original));
+      standardEnergy += original ** 2;
+      iosEnergy += louder ** 2;
+      peak = Math.max(peak, Math.abs(louder) / 32767);
+    }
+    expect(Math.sqrt(iosEnergy / standardEnergy)).toBeGreaterThan(1.5);
+    expect(peak).toBeGreaterThan(0.95);
+    expect(peak).toBeLessThanOrEqual(0.981);
+    expect(ios.readInt16LE(44)).toBe(0);
+    expect(ios.readInt16LE(ios.length - 2)).toBe(0);
+  });
+
   it('has 1.5x the original waveform amplitude within PCM rounding tolerance', () => {
     const wav = readFileSync(new URL('../public/assets/boundary-thump.wav', import.meta.url));
     let phase = 0;

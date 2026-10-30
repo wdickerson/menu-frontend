@@ -239,18 +239,19 @@ h1 {
   font-size: clamp(1.4rem, 5vw, 2rem);
 }
 
-.menu-section ul {
-  margin: 0;
-  padding-left: 1.5rem;
-}
-
-.menu-section li {
-  margin-bottom: 1rem;
+.menu-item {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  margin: 0 0 1rem;
   line-height: 1.6;
 }
 
+.menu-item-bullet {
+  text-align: center;
+}
+
 .menu-section h3,
-.menu-section li {
+.menu-item {
   overflow-wrap: anywhere;
 }
 

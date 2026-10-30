@@ -1,3 +1,5 @@
+import { randomUuid } from './randomUuid';
+
 export type AppRoute =
   | { screen: 'menu' }
   | { screen: 'quick-nav' }
@@ -10,7 +12,7 @@ type NavigationWindow = Pick<Window, 'history' | 'addEventListener' | 'removeEve
 
 // Keep URLs unchanged, and deliberately start at home after every page load.
 export function createAppNavigation(browser: NavigationWindow, onChange: (route: AppRoute) => void) {
-  const session = crypto.randomUUID();
+  const session = randomUuid();
   let entry: NavigationEntry = { session, depth: 0, route: { screen: 'menu' } };
   const stateFor = (value: NavigationEntry) => ({ ...browser.history.state, menuReaderNavigation: value });
   browser.history.replaceState(stateFor(entry), '');

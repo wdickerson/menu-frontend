@@ -24,7 +24,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-describe('bundled boundary thump', () => {
+describe('boundary thump media fallback', () => {
   let clips: Array<ReturnType<typeof mockAudio>>;
   let constructor: ReturnType<typeof vi.fn>;
   let session: { type: string };
@@ -54,9 +54,30 @@ describe('bundled boundary thump', () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([
+    { device: 'iPhone Safari', userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', platform: 'iPhone', maxTouchPoints: 5, ios: true },
+    { device: 'iPhone Chrome', userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) CriOS/130.0', platform: 'iPhone', maxTouchPoints: 5, ios: true },
+    { device: 'iPad', userAgent: 'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)', platform: 'iPad', maxTouchPoints: 5, ios: true },
+    { device: 'iPod', userAgent: 'Mozilla/5.0 (iPod touch; CPU iPhone OS 15_0 like Mac OS X)', platform: 'iPod', maxTouchPoints: 5, ios: true },
+    { device: 'desktop-mode iPad', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)', platform: 'MacIntel', maxTouchPoints: 5, ios: true },
+    { device: 'Mac', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)', platform: 'MacIntel', maxTouchPoints: 0, ios: false },
+    { device: 'Android', userAgent: 'Mozilla/5.0 (Linux; Android 15)', platform: 'Linux armv8l', maxTouchPoints: 5, ios: false },
+    { device: 'touchscreen Windows', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', platform: 'Win32', maxTouchPoints: 10, ios: false },
+  ])('selects the louder recording only on iOS: $device', async ({ userAgent, platform, maxTouchPoints, ios }) => {
+    thump.dispose();
+    vi.stubGlobal('navigator', { audioSession: session, userAgent, platform, maxTouchPoints });
+    thump = createBoundaryThump();
+    const clip = clips.at(-1)!;
+    expect(clip.src).toBe(`${import.meta.env.BASE_URL}assets/boundary-thump${ios ? '-ios' : ''}.wav`);
+    expect(clip.play).not.toHaveBeenCalled();
+    const playing = thump.play();
+    expect(clip.play).toHaveBeenCalledOnce();
+    await playing;
+  });
+
   it('preloads the base-path-safe asset without autoplay, then plays inside the gesture', async () => {
     expect(clips[0].src).toBe(`${import.meta.env.BASE_URL}assets/boundary-thump.wav`);
-    expect(clips[0].preload).toBe('auto');
+    expect(clips[0].preload).toBe('metadata');
     expect(clips[0].load).not.toHaveBeenCalled();
     expect(clips[0].play).not.toHaveBeenCalled();
     expect(session.type).toBe('auto');
@@ -66,9 +87,11 @@ describe('bundled boundary thump', () => {
     expect(constructor).toHaveBeenCalledOnce();
     expect(session.type).toBe('playback');
     await playing;
-    clips[0].ended = true;
-    clips[0].onended?.();
+    clips[0].paused = clips[0].ended = true; // Native playback has finished.
     expect(clips[0].paused).toBe(true);
+    expect(clips[0].onended).toBeNull();
+    expect(clips[0].onerror).toBeNull();
+    expect(clips[0].onpause).toBeNull();
     expect(clips[0].removeAttribute).not.toHaveBeenCalled();
     expect(clips[0].load).not.toHaveBeenCalled();
     expect(session.type).toBe('playback');
@@ -89,22 +112,16 @@ describe('bundled boundary thump', () => {
     expect(session.type).toBe(action === 'dispose' ? 'auto' : 'playback');
   });
 
-  it.each(['resolve', 'reject'] as const)('ignores stale playback %s and old events during a newer thump', async (result) => {
+  it.each(['resolve', 'reject'] as const)('ignores stale playback %s during a newer thump', async (result) => {
     const playback = deferred();
     clips[0].play.mockReturnValueOnce(playback.promise);
     const oldPlaying = thump.play();
-    const oldEnded = clips[0].onended;
-    const oldError = clips[0].onerror;
-    const oldPause = clips[0].onpause;
     await thump.play();
     expect(constructor).toHaveBeenCalledOnce();
     const pauseCount = clips[0].pause.mock.calls.length;
     if (result === 'resolve') playback.resolve();
     else playback.reject(new Error('Aborted'));
     await oldPlaying;
-    oldEnded?.();
-    oldError?.();
-    oldPause?.();
     expect(clips[0].play).toHaveBeenCalledTimes(2);
     expect(clips[0].pause).toHaveBeenCalledTimes(pauseCount);
     expect(clips[0].paused).toBe(false);
@@ -117,8 +134,7 @@ describe('bundled boundary thump', () => {
       await thump.play();
       expect(clips[0].currentTime).toBe(0);
       clips[0].currentTime = 0.2;
-      clips[0].ended = true;
-      clips[0].onended?.();
+      clips[0].paused = clips[0].ended = true;
       thump.cancel(); // The unchanged speech path calls cancel before speaking.
     }
     expect(constructor).toHaveBeenCalledOnce();
@@ -144,24 +160,21 @@ describe('bundled boundary thump', () => {
     expect(clips[0].play).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['onerror', 'onpause'] as const)('cancels on %s without resuming automatically', async (event) => {
+  it.each(['error', 'pause'])('waits for the next gesture after a native media %s', async (event) => {
     await thump.play();
-    if (event === 'onerror') clips[0].error = { code: 3 };
-    else clips[0].paused = true;
-    clips[0][event]?.();
+    clips[0].paused = true;
+    if (event === 'error') clips[0].error = { code: 3 };
     expect(clips[0].paused).toBe(true);
     expect(clips[0].play).toHaveBeenCalledOnce();
     expect(clips[0].load).not.toHaveBeenCalled();
     await thump.play();
     expect(clips[0].play).toHaveBeenCalledTimes(2);
-    expect(clips[0].load).toHaveBeenCalledTimes(event === 'onerror' ? 1 : 0);
+    expect(clips[0].load).toHaveBeenCalledTimes(event === 'error' ? 1 : 0);
   });
 
-  it('does not unload the clip when natural completion emits pause before ended', async () => {
+  it('keeps the clip loaded after natural completion', async () => {
     await thump.play();
     clips[0].paused = clips[0].ended = true;
-    clips[0].onpause?.();
-    clips[0].onended?.();
     expect(clips[0].removeAttribute).not.toHaveBeenCalled();
     expect(clips[0].load).not.toHaveBeenCalled();
     await thump.play();

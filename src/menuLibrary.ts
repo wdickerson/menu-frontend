@@ -1,5 +1,6 @@
 import { restaurantMenus, type RestaurantMenu } from './data/menus';
 import { isSharedMenuId } from './sharedMenuId';
+import { randomUuid } from './randomUuid';
 
 export type RecentMenu = { id: string; capturedAt: string; menu: RestaurantMenu };
 export type MenuLibrary = { selectedId: string; recentMenus: RecentMenu[] };
@@ -68,7 +69,7 @@ export function loadMenuLibrary(): MenuLibrary {
 }
 
 export function addRecentMenu(library: MenuLibrary, menu: RestaurantMenu): MenuLibrary {
-  const entry = { id: `captured-${crypto.randomUUID()}`, capturedAt: new Date().toISOString(), menu };
+  const entry = { id: `captured-${randomUuid()}`, capturedAt: new Date().toISOString(), menu };
   return { selectedId: entry.id, recentMenus: [entry, ...library.recentMenus].slice(0, MAX_RECENT_MENUS) };
 }
 

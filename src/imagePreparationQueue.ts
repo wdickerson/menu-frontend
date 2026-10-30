@@ -1,4 +1,5 @@
 import { MAX_IMAGES, MAX_IMAGE_BYTES, prepareMenuImage } from './menuApi';
+import { randomUuid } from './randomUuid';
 
 type PreparationResult = { blob: Blob; error?: never } | { error: Error; blob?: never };
 export type QueuedMenuImage = {
@@ -21,7 +22,7 @@ export class ImagePreparationQueue {
   add(file: Blob): QueuedMenuImage {
     if (this.disposed) throw new Error('This capture session has ended.');
     if (this.images.size >= MAX_IMAGES) throw new Error(`Capture at most ${MAX_IMAGES} images.`);
-    const image: QueuedMenuImage = { id: crypto.randomUUID(), file, blob: null, singleImage: false,
+    const image: QueuedMenuImage = { id: randomUuid(), file, blob: null, singleImage: false,
       controller: new AbortController(), result: Promise.resolve({ error: new Error('Not prepared yet.') }) };
     this.images.set(image.id, image);
     this.schedule(image);

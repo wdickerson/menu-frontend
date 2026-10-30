@@ -1,4 +1,4 @@
-# Menu Reader frontend v2.1.1
+# Menu Reader frontend v2.1.5
 
 React/TypeScript/Vite app for capturing menus, saving them locally, and reading
 them with a screen reader or spoken Quick Nav gestures. Web search finds candidate
@@ -16,16 +16,46 @@ See [FRONTEND_REQUIREMENTS.md](FRONTEND_REQUIREMENTS.md) for current behavior.
 	Quick Nav and Share remain disabled with lighter text, borders, and backgrounds.
 - The home footer includes creator and social links. The application version
 	remains in the Recent Menus footer.
+- Menu items are plain text rows with decorative, screen-reader-hidden bullets,
+	so bullets remain visible without being announced before each item.
 
 ## Quick Nav
 
+- Quick Nav does not request a screen wake lock; normal screen timeout settings apply.
 - Flick or use arrow keys: up/down for sections, left/right for items.
-- Tap or single-click to repeat. Touch double-taps retain their existing speed
-	announcement/cycling behavior; each mouse double-click changes the speed.
+- Tap or single-click during menu speech to stop it. Successive taps/clicks read
+	one character at a time, including spoken names for spaces and punctuation.
+	If speech has already finished, the first tap reads the first character.
+	Each spelling tap advances even if the previous character is still speaking.
+	At the end, taps thump without wrapping; navigating resets spelling to the new
+	section/item. The full menu text stays displayed. Touch double-taps retain their
+	existing speed announcement/cycling behavior; each mouse double-click changes
+	the speed without replacing the menu text being spelled.
 - Spoken sections/items replace the instructions; boundary thumps and speed
 	announcements leave that text unchanged. Reentering restores the instructions.
+- When speech is idle, a single-finger touch starts a zero-volume speech warm-up
+	before the swipe is completed, reducing the observed iOS speech startup lag.
+	It never interrupts active or queued speech. Menu speech and boundary cues cancel
+	the warm-up immediately; it does not change the spelling cursor or tap timing.
+	There is no periodic speech keepalive, and exiting cancels an outstanding warm-up.
 - Long text is clipped rather than scrolled. The boundary recording has 50% more
 	amplitude without clipping; audible loudness still needs real-device checks.
+- Boundary thumps are fetched and decoded into memory when Quick Nav opens,
+	then played directly through one low-latency Web Audio context, with a fresh source
+	per cue. One-time silent warmup prepares playback on entry or user interaction.
+	iOS devices (including iPads using desktop mode) select a louder, soft-limited
+	recording with no PCM clipping; other devices retain the existing recording.
+	Both use the same playback path. Playback-session intent is retained where supported and
+	restored on exit. If the decoded buffer is unavailable, an audio element provides
+	a metadata-preloaded fallback. Loading never replays an old cue. Touch timing and
+	the non-iOS recording are unchanged.
+- iOS has a [reported speech-synthesis ducking bug](https://bugs.webkit.org/show_bug.cgi?id=278598)
+	that briefly lowers other audio after speech. The finger-down speech warm-up also
+	produced consistently quieter thumps in on-device testing, rather than louder
+	thumps after longer pauses; this is consistent with ducking, not proof of its cause.
+	No dedicated ducking workaround is retained. Regression tests cover immediate cue
+	scheduling, silent speech warm-up, buffer reuse, fallback, cancellation, and cleanup;
+	they cannot measure speech onset or final volume changes applied by the operating system.
 
 ## Sharing
 
@@ -55,6 +85,12 @@ npm run dev
 - `npm test`: regression tests.
 - `npm run build`: TypeScript checks and production build.
 - `npm run preview`: preview the build. Vite's default base path is `/menu/`.
+
+LAN HTTP access (for example, `http://10.0.0.151:5173/menu/`) supports app startup
+and local menu IDs without `crypto.randomUUID()`. Camera access, native sharing,
+and clipboard access still require a secure context on iPhone; use HTTPS with a
+certificate trusted by the phone to test those features. HTTP `localhost` is a
+secure-context exception only on the device running the browser, not a remote LAN IP.
 
 ## API and deployment
 

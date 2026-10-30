@@ -101,3 +101,24 @@ Make the end-of-list thump about 50% louder
 Support Quick Nav with up/down left/right arrow keys, so that quick nav can be used on non-touchscreens. Single click repeats; double click changes reading speed. Keep the touch gestures exactly as they are.
 
 When any text is read aloud (either a section or an item), replace the quick nav instruction text with what was read aloud. Be sure to not allow any scrolling on this page, even if the item text is exceptionally long and overflows its container. When a user hits a "thump", do not update the text. When a user exits quick nav mode and then returns to it, display the instructions once again.
+
+# Menu Reader frontend requirements — v2.1.2
+
+On the main page when a menu is loaded, structure the list of items such that a screen reader does not audibly say "bullet" before each menu item, but the bullets still appear visually.
+
+# Menu Reader frontend requirements — v2.1.3
+
+Reduce lag of audible end-of-list thump, especially on iOS Safari
+
+On iOS devices only, play a louder version of the thump.
+
+# Menu Reader frontend requirements — v2.1.4
+
+Change the single-tap functionality in Quick Nav Mode.
+
+If speech is currently playing, single tap stops it.
+Then, every successive single tap reads the current section or item one character at a time (including spaces and punctuation). This is so that if a word is dificult to hear, the user can examine how it is spelled.
+
+# Menu Reader frontend requirements — v2.1.5
+
+Do not keep screen awake when on quick nav page.

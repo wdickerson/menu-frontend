@@ -1,5 +1,5 @@
-// Original, offline-generated recording of the tuned boundary thump.
-// Run with Node to regenerate the committed WAV; no runtime synthesis/dependencies.
+// Original, offline-generated recordings of the tuned boundary thump.
+// Run with Node to regenerate the committed WAVs; no runtime synthesis/dependencies.
 import { writeFileSync } from 'node:fs';
 
 const sampleRate = 48000;
@@ -20,6 +20,7 @@ wav.writeUInt16LE(2, 32);
 wav.writeUInt16LE(16, 34);
 wav.write('data', 36);
 wav.writeUInt32LE(dataSize, 40);
+const iosWav = Buffer.from(wav);
 
 let phase = 0;
 for (let sample = 0; sample < sampleCount; sample += 1) {
@@ -31,8 +32,14 @@ for (let sample = 0; sample < sampleCount; sample += 1) {
       ? 0.6 * (0.0001 / 0.6) ** ((time - 0.012) / 0.168)
       : 0.0001 * (duration - time) / 0.02;
   // 1.5x the original amplitude, retaining the tuned envelope without clipping.
-  wav.writeInt16LE(Math.round(Math.sin(phase) * gain * 1.5 * 32767), 44 + sample * 2);
+  const value = Math.sin(phase) * gain * 1.5;
+  wav.writeInt16LE(Math.round(value * 32767), 44 + sample * 2);
+  // Boost quiet portions without clipping the already-loud peak. The smooth
+  // limiter retains the duration/sweep and leaves 2% PCM headroom on iOS.
+  const louder = 0.98 * Math.tanh(2 * value) / Math.tanh(2 * 0.9);
+  iosWav.writeInt16LE(Math.round(louder * 32767), 44 + sample * 2);
   phase += 2 * Math.PI * frequency / sampleRate;
 }
 
 writeFileSync(new URL('../public/assets/boundary-thump.wav', import.meta.url), wav);
+writeFileSync(new URL('../public/assets/boundary-thump-ios.wav', import.meta.url), iosWav);
