@@ -300,6 +300,86 @@ describe('Quick Nav input and spoken text', () => {
     expect(text()).toBe(initial);
   });
 
+  describe.each(['keyboard', 'touch'] as const)('section item resets with %s input', (input) => {
+    const deltas = {
+      ArrowUp: [0, -80], ArrowDown: [0, 80],
+      ArrowLeft: [-80, 0], ArrowRight: [80, 0],
+    } as const;
+
+    function navigate(...arrows: Array<keyof typeof deltas>) {
+      for (const arrow of arrows) {
+        if (input === 'keyboard') key(arrow);
+        else {
+          const [x, y] = deltas[arrow];
+          flick(x, y);
+        }
+      }
+    }
+
+    beforeEach(() => {
+      render({ ...menu, sections: [{ name: 'Starters', items: ['Soup', 'Salad', 'Bread'] }] });
+    });
+
+    it.each(['ArrowUp', 'ArrowDown'] as const)('resets items when reversing the %s section boundary', (boundary) => {
+      navigate('ArrowDown', 'ArrowRight', 'ArrowRight', boundary);
+      expect(said()).toEqual(['Starters', 'Soup', 'Salad']);
+      expect(text()).toBe('Salad');
+      expect(audio.play).toHaveBeenCalledOnce();
+      navigate(boundary === 'ArrowUp' ? 'ArrowDown' : 'ArrowUp');
+      expect(text()).toBe('Starters');
+      navigate('ArrowRight');
+      expect(said()).toEqual(['Starters', 'Soup', 'Salad', 'Starters', 'Soup']);
+      expect(audio.play).toHaveBeenCalledOnce();
+    });
+
+    it.each(['ArrowUp', 'ArrowDown'] as const)('preserves the item position when %s only thumps', (boundary) => {
+      navigate('ArrowDown', 'ArrowRight', 'ArrowRight', boundary, boundary);
+      expect(said()).toEqual(['Starters', 'Soup', 'Salad']);
+      expect(text()).toBe('Salad');
+      expect(audio.play).toHaveBeenCalledTimes(2);
+      navigate('ArrowRight');
+      expect(said()).toEqual(['Starters', 'Soup', 'Salad', 'Bread']);
+      expect(audio.play).toHaveBeenCalledTimes(2);
+    });
+
+    it('resets items when the initial section is announced after reading items', () => {
+      navigate('ArrowRight', 'ArrowRight', 'ArrowDown', 'ArrowRight');
+      expect(said()).toEqual(['Soup', 'Salad', 'Starters', 'Soup']);
+      expect(audio.play).not.toHaveBeenCalled();
+    });
+
+    it('clears a previous item boundary when the section is announced again', () => {
+      navigate('ArrowDown', 'ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowUp');
+      expect(audio.play).toHaveBeenCalledTimes(2);
+      expect(text()).toBe('Bread');
+      navigate('ArrowDown', 'ArrowRight');
+      expect(said()).toEqual(['Starters', 'Soup', 'Salad', 'Bread', 'Starters', 'Soup']);
+      expect(audio.play).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the first item unread when only a section thump is played', () => {
+      const instructions = text();
+      navigate('ArrowUp', 'ArrowUp');
+      expect(text()).toBe(instructions);
+      navigate('ArrowRight');
+      expect(said()).toEqual(['Soup']);
+      expect(audio.play).toHaveBeenCalledTimes(2);
+    });
+
+    it('preserves an item boundary latch when only a section thump is played', () => {
+      navigate('ArrowDown', 'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowRight');
+      expect(said()).toEqual(['Starters', 'Soup', 'Soup', 'Salad']);
+      expect(audio.play).toHaveBeenCalledTimes(2);
+    });
+
+    it('still resets items when moving away from and back to a section', () => {
+      render(menu);
+      navigate('ArrowDown', 'ArrowRight', 'ArrowRight', 'ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowRight');
+      expect(said()).toEqual(['Starters', 'Soup', 'Salad', 'Mains', 'Pasta', 'Starters', 'Soup']);
+      expect(audio.play).not.toHaveBeenCalled();
+    });
+  });
+
   it('allows blank headings and only thumps for empty-section items in either direction', () => {
     key('ArrowDown'); key('ArrowDown'); key('ArrowDown');
     expect(text()).toBe('');

@@ -122,3 +122,13 @@ Then, every successive single tap reads the current section or item one characte
 # Menu Reader frontend requirements — v2.1.5
 
 Do not keep screen awake when on quick nav page.
+
+# Menu Reader frontend requirements — v2.1.6
+
+Correct the "item reset behavior" when the user reaches the "thumps" by swiping up or down through sections.
+
+Current: User is on first section. they swipe right to item 1, swipe right again to item 2, swipe up to hear the the thump, swipe down and here "Section 1", swipe right and hear item 3
+
+Desired: User is on first section. they swipe right to item 1, swipe right again to item 2, swipe up to hear the the thump, swipe down and here "Section 1", swipe right and hear item 1
+
+Current and still desired: User is on first section. they swipe right to item 1, swipe right again to item 2, swipe up to hear the the thump, swipe right to hear item 3

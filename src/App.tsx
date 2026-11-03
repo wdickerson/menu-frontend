@@ -210,6 +210,12 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
   }
 
   function speakMenuText(text: string, target: NavigationTarget) {
+    // Every section announcement restarts its items, including boundary reversals.
+    if (target === 'section') {
+      itemIndexRef.current = 0;
+      boundarySlotsRef.current.item = null;
+      readSlotsRef.current.item = false;
+    }
     setDisplayText(text);
     lastUtteranceRef.current = text;
     lastUtteranceTargetRef.current = target;
@@ -232,14 +238,9 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
     }
 
     const nextSection = menu.sections[nextSectionIndex];
-    const nextItemIndex = 0;
 
     sectionIndexRef.current = nextSectionIndex;
-    itemIndexRef.current = nextItemIndex;
     boundarySlotsRef.current.section = null;
-    boundarySlotsRef.current.item = null;
-    readSlotsRef.current.section = true;
-    readSlotsRef.current.item = false;
     speakMenuText(nextSection.name, 'section');
     return true;
   }
