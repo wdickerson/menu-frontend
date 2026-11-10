@@ -132,3 +132,11 @@ Current: User is on first section. they swipe right to item 1, swipe right again
 Desired: User is on first section. they swipe right to item 1, swipe right again to item 2, swipe up to hear the the thump, swipe down and here "Section 1", swipe right and hear item 1
 
 Current and still desired: User is on first section. they swipe right to item 1, swipe right again to item 2, swipe up to hear the the thump, swipe right to hear item 3
+
+# Menu Reader frontend requirements — v2.1.7
+
+Modify the single-tap gesture function.
+
+With each single tap:
+-Progress through the current item one word at a time
+-Speak the word, and then speak the spelling of the word one letter at a time

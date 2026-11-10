@@ -50,8 +50,7 @@ const QUICK_NAV_INSTRUCTIONS = `This is the Quick Nav page.
 Turn off screen readers to enable quick nav gestures.
 Flick up/down to navigate menu sections.
 Flick left/right to navigate items.
-Single tap to stop reading.
-Repeat single taps to read by character.
+Single tap to read the next word and spell it.
 Double tap to change reading speed.`;
 
 function readSavedPreference(key: string) {
@@ -126,9 +125,8 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
   const itemIndexRef = useRef(0);
   const lastUtteranceRef = useRef(menu.sections[0].name);
   const lastUtteranceTargetRef = useRef<NavigationTarget>('section');
-  const charactersRef = useRef(Array.from(menu.sections[0].name));
-  const characterIndexRef = useRef(0);
-  const spellingRef = useRef(false);
+  const wordsRef = useRef(menu.sections[0].name.match(/\S+/gu) ?? []);
+  const wordIndexRef = useRef(0);
   const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const touchWarmupUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const hasSpokenRef = useRef(false);
@@ -172,7 +170,7 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
       || synthesis.speaking || synthesis.pending) return;
 
     // Overlap native speech startup with the gesture, without
-    // treating silent speech as menu speech for the tap-to-stop/spell behavior.
+    // treating silent speech as menu speech.
     const utterance = new SpeechSynthesisUtterance('ready');
     utterance.volume = 0;
     utterance.rate = speechRateRef.current;
@@ -187,21 +185,28 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
     try { synthesis.speak(utterance); } catch { finish(); /* Warm-up is optional. */ }
   }
 
-  function speakQuickNav(text: string, rate: SpeechRate) {
+  function speakQuickNav(text: string, rate: SpeechRate, spelling: string[] = []) {
     boundaryThumpRef.current?.cancel();
     const synthesis = window.speechSynthesis;
     if (!synthesis || typeof SpeechSynthesisUtterance === 'undefined') return;
     hasSpokenRef.current = true;
     stopSpeech();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = rate;
-    activeUtteranceRef.current = utterance;
-    const finish = () => {
-      if (activeUtteranceRef.current === utterance) activeUtteranceRef.current = null;
-    };
-    utterance.onend = finish;
-    utterance.onerror = finish;
-    try { synthesis.speak(utterance); } catch { finish(); /* Speech is optional. */ }
+    const parts = [text, ...spelling];
+    function speakPart(index: number) {
+      const utterance = new SpeechSynthesisUtterance(parts[index]);
+      utterance.rate = rate;
+      activeUtteranceRef.current = utterance;
+      const finish = (continueSpelling: boolean) => {
+        // Canceled, superseded, or already completed speech must not resume spelling.
+        if (activeUtteranceRef.current !== utterance) return;
+        activeUtteranceRef.current = null;
+        if (continueSpelling && index + 1 < parts.length) speakPart(index + 1);
+      };
+      utterance.onend = () => finish(true);
+      utterance.onerror = () => finish(false);
+      try { synthesis.speak(utterance); } catch { finish(false); /* Speech is optional. */ }
+    }
+    speakPart(0);
   }
 
   function playBoundaryThump() {
@@ -219,9 +224,8 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
     setDisplayText(text);
     lastUtteranceRef.current = text;
     lastUtteranceTargetRef.current = target;
-    charactersRef.current = Array.from(text);
-    characterIndexRef.current = 0;
-    spellingRef.current = false;
+    wordsRef.current = text.match(/\S+/gu) ?? [];
+    wordIndexRef.current = 0;
     readSlotsRef.current[target] = true;
     speakQuickNav(text, speechRateRef.current);
   }
@@ -264,25 +268,17 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
     return true;
   }
 
-  function readNextCharacter(wasSpeaking: boolean) {
-    // Once spelling begins, each tap advances, interrupting a slow character if needed.
-    const shouldStop = !spellingRef.current && wasSpeaking;
-    spellingRef.current = true;
-    if (shouldStop) {
-      stopSpeech();
-      return;
-    }
-
+  function readNextWord() {
     const target = lastUtteranceTargetRef.current;
     readSlotsRef.current[target] = true;
     setDisplayText(lastUtteranceRef.current);
-    const character = charactersRef.current[characterIndexRef.current];
-    if (character === undefined) {
+    const word = wordsRef.current[wordIndexRef.current];
+    if (word === undefined) {
       playBoundaryThump();
       return;
     }
-    characterIndexRef.current += 1;
-    speakQuickNav(quickNavCharacterSpeech(character), speechRateRef.current);
+    wordIndexRef.current += 1;
+    speakQuickNav(word, speechRateRef.current, Array.from(word, quickNavCharacterSpeech));
   }
 
   function readCurrentGestureTarget(target: NavigationTarget) {
@@ -338,11 +334,10 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
     if (isTouchClick(event)) return;
     clearMouseClick();
     if (event.detail > 1) return;
-    const wasSpeaking = activeUtteranceRef.current !== null;
     mouseTimerRef.current = window.setTimeout(() => {
       mouseTimerRef.current = null;
       endSpeedAdjustment();
-      readNextCharacter(wasSpeaking);
+      readNextWord();
     }, MOUSE_CLICK_WINDOW);
   }
 
@@ -373,13 +368,11 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
       return;
     }
 
-    // Snapshot at tap time: speech may finish during double-tap recognition.
-    const wasSpeaking = activeUtteranceRef.current !== null;
-    // Wait briefly so a double tap announces only the speed, not a character first.
+    // Wait briefly so a double tap announces only the speed, not a word first.
     const timerId = window.setTimeout(() => {
       pendingTapRef.current = null;
       adjustingSpeedRef.current = false;
-      readNextCharacter(wasSpeaking);
+      readNextWord();
     }, DOUBLE_TAP_WINDOW);
 
     pendingTapRef.current = {

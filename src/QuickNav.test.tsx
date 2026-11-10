@@ -31,6 +31,10 @@ describe('Quick Nav input and spoken text', () => {
     act(() => root.render(<QuickNav menu={value} speechRate={1.5}
       onSpeechRateChange={onSpeechRateChange} onExit={onExit} />));
   }
+  function renderFresh(value: RestaurantMenu) {
+    act(() => root.render(null));
+    render(value);
+  }
 
   function area() { return container.querySelector<HTMLElement>('.gesture-area')!; }
   function text() { return container.querySelector('p')!.textContent; }
@@ -43,6 +47,12 @@ describe('Quick Nav input and spoken text', () => {
       utterance.onend?.call(utterance, new Event('end') as SpeechSynthesisEvent);
     } else {
       utterance.onerror?.call(utterance, new Event('error') as SpeechSynthesisErrorEvent);
+    }
+  }
+  function finishWord(word: string) {
+    // Finish the word, then each Unicode character in its spelling.
+    for (let index = 0; index <= Array.from(word).length; index += 1) {
+      complete(utterances().at(-1)!);
     }
   }
   function advance(ms = 700) { act(() => vi.advanceTimersByTime(ms)); }
@@ -175,7 +185,7 @@ describe('Quick Nav input and spoken text', () => {
   it('does not add silent speech to mouse or keyboard input', () => {
     click(); advance();
     key('ArrowRight');
-    expect(said()).toEqual(['S', 'Soup']);
+    expect(said()).toEqual(['Starters', 'Soup']);
     expect(warmups()).toHaveLength(0);
     expect(speech.speak).toHaveBeenCalledTimes(2);
   });
@@ -201,18 +211,18 @@ describe('Quick Nav input and spoken text', () => {
     complete(warmup, 'onend');
     complete(warmup, 'onerror');
     tap(); advance();
-    expect(said()).toEqual(['Soup']); // Stop, not spell: menu speech is still owned.
-    tap(); advance();
-    expect(said()).toEqual(['Soup', 'S']);
+    expect(said()).toEqual(['Soup', 'Soup']);
+    finishWord('Soup');
+    expect(said()).toEqual(['Soup', 'Soup', 'S', 'o', 'u', 'p']);
   });
 
-  it('spells on the first idle tap even if the silent warm-up is still speaking', () => {
+  it('reads a word on the first idle tap even if the silent warm-up is still speaking', () => {
     tap();
     speech.speaking = true;
     advance(199);
     expect(said()).toEqual([]);
     advance(1);
-    expect(said()).toEqual(['S']);
+    expect(said()).toEqual(['Starters']);
     expect(warmups()).toHaveLength(1);
     expect(speech.cancel).toHaveBeenCalledOnce();
     expect(text()).toBe('Starters');
@@ -397,57 +407,53 @@ describe('Quick Nav input and spoken text', () => {
     expect(said()).toEqual([]);
   });
 
-  it('single-click spells one character at a time and keeps full menu text displayed', () => {
-    click();
-    expect(said()).toEqual([]);
-    advance();
-    expect(said()).toEqual(['S']);
-    expect(text()).toBe('Starters');
-    click(); advance();
-    expect(said()).toEqual(['S', 't']);
-  });
-
   it.each([
     { input: 'touch', delay: 200 },
     { input: 'mouse', delay: 300 },
-  ])('reads a character after only $delay ms for $input input', ({ input, delay }) => {
+  ])('reads a word after only $delay ms for $input input', ({ input, delay }) => {
     if (input === 'touch') tap(); else click();
     advance(delay - 1);
     expect(said()).toEqual([]);
     advance(1);
-    expect(said()).toEqual(['S']);
+    expect(said()).toEqual(['Starters']);
   });
 
-  it.each(['touch', 'mouse'])('stops menu speech, then spells on successive %s taps', (input) => {
+  it.each(['touch', 'mouse'])('reads and spells successive words on every %s tap, even during menu speech', (input) => {
     const single = () => { if (input === 'touch') tap(); else click(); advance(); };
+    render({ ...menu, sections: [{ name: 'Test', items: ['Hot soup'] }] });
     key('ArrowRight');
     const cancellations = speech.cancel.mock.calls.length;
     single();
-    expect(said()).toEqual(['Soup']);
+    expect(said()).toEqual(['Hot soup', 'Hot']);
     expect(speech.cancel).toHaveBeenCalledTimes(cancellations + 1);
-    single(); single(); single(); single();
-    expect(said()).toEqual(['Soup', 'S', 'o', 'u', 'p']);
+    finishWord('Hot');
+    expect(said()).toEqual(['Hot soup', 'Hot', 'H', 'o', 't']);
+    // Letter continuations must not cancel the preceding word or letters.
+    expect(speech.cancel).toHaveBeenCalledTimes(cancellations + 1);
+    expect(text()).toBe('Hot soup');
+    single();
+    expect(said().at(-1)).toBe('soup');
+    finishWord('soup');
+    expect(said()).toEqual(['Hot soup', 'Hot', 'H', 'o', 't', 'soup', 's', 'o', 'u', 'p']);
     single(); single();
-    expect(said()).toEqual(['Soup', 'S', 'o', 'u', 'p']);
+    expect(said().at(-1)).toBe('p');
     expect(audio.play).toHaveBeenCalledTimes(2);
-    expect(text()).toBe('Soup');
+    expect(text()).toBe('Hot soup');
   });
 
-  it.each(['onend', 'onerror'] as const)('starts spelling immediately after speech %s', (callback) => {
+  it.each(['onend', 'onerror'] as const)('starts word reading after menu speech %s', (callback) => {
     key('ArrowDown');
     complete(utterances().at(-1)!, callback);
     tap(); advance();
-    expect(said()).toEqual(['Starters', 'S']);
+    expect(said()).toEqual(['Starters', 'Starters']);
   });
 
-  it('uses speech state at tap time even if speech finishes during recognition', () => {
+  it('reads the first word even if menu speech finishes during tap recognition', () => {
     key('ArrowRight');
     tap();
     complete(utterances().at(-1)!);
     advance();
-    expect(said()).toEqual(['Soup']);
-    tap(); advance();
-    expect(said()).toEqual(['Soup', 'S']);
+    expect(said()).toEqual(['Soup', 'Soup']);
   });
 
   it('ignores stale completion callbacks from canceled speech', () => {
@@ -456,33 +462,106 @@ describe('Quick Nav input and spoken text', () => {
     key('ArrowRight');
     complete(oldUtterance, 'onend'); complete(oldUtterance, 'onerror');
     tap(); advance();
-    expect(said()).toEqual(['Starters', 'Soup']);
-    tap(); advance();
-    expect(said()).toEqual(['Starters', 'Soup', 'S']);
+    expect(said()).toEqual(['Starters', 'Soup', 'Soup']);
+    finishWord('Soup');
+    expect(said().slice(-4)).toEqual(['S', 'o', 'u', 'p']);
   });
 
-  it('speaks spaces, punctuation, and Unicode code points without dropping characters', () => {
-    const value = 'A ,.!?-’\n😀';
+  it('splits words on whitespace and spells punctuation and Unicode without dropping characters', () => {
+    const value = ' \tA,\u00a0café!\n😀  ';
     render({ ...menu, sections: [{ name: 'Test', items: [value] }] });
     key('ArrowRight');
-    tap(); advance(); // Stop full text.
-    for (const _character of Array.from(value)) { tap(); advance(); }
-    expect(said()).toEqual([value, 'A', 'space', 'comma', 'period', 'exclamation mark',
-      'question mark', 'hyphen', 'right single quotation mark', 'new line', '😀']);
+    for (const word of ['A,', 'café!', '😀']) {
+      tap(); advance(); finishWord(word);
+    }
+    expect(said()).toEqual([value, 'A,', 'A', 'comma', 'café!', 'c', 'a', 'f', 'é', 'exclamation mark', '😀', '😀']);
+    tap(); advance();
+    expect(audio.play).toHaveBeenCalledOnce();
     expect(text()).toBe(value);
   });
 
-  it('resets spelling when navigating to an item or section, including boundary reversal', () => {
-    tap(); advance(); tap(); advance();
-    key('ArrowRight'); tap(); advance(); tap(); advance();
-    key('ArrowLeft'); // Boundary stops speech without resetting spelling.
+  it('resets words on navigation and boundary reversal, but not on a thump', () => {
+    renderFresh({ ...menu, sections: [{ name: 'First section', items: ['Hot soup'] }] });
     tap(); advance();
-    expect(said()).toEqual(['S', 't', 'Soup', 'S', 'o']);
-    key('ArrowRight'); // Reversal rereads Soup, resetting spelling.
-    tap(); advance(); tap(); advance();
-    expect(said().slice(-2)).toEqual(['Soup', 'S']);
-    key('ArrowDown'); tap(); advance(); tap(); advance();
-    expect(said().slice(-2)).toEqual(['Mains', 'M']);
+    expect(said()).toEqual(['First']);
+    key('ArrowRight'); tap(); advance();
+    key('ArrowLeft'); // Boundary stops speech without resetting the word cursor.
+    tap(); advance();
+    expect(said()).toEqual(['First', 'Hot soup', 'Hot', 'soup']);
+    key('ArrowRight'); // Reversal rereads the item and resets words.
+    tap(); advance();
+    expect(said().slice(-2)).toEqual(['Hot soup', 'Hot']);
+    key('ArrowUp'); key('ArrowDown'); tap(); advance();
+    expect(said().slice(-2)).toEqual(['First section', 'First']);
+  });
+
+  describe.each(['word', 'letter'] as const)('while speaking a %s', (stage) => {
+    it.each(['next tap', 'navigation', 'speed', 'boundary', 'unmount'] as const)(
+      'does not resume stale spelling after %s', (action) => {
+        render({ ...menu, sections: [{ name: 'Test', items: ['Hot soup', 'Salad'] }] });
+        key('ArrowRight');
+        tap(); advance();
+        if (stage === 'letter') complete(utterances().at(-1)!);
+        const oldUtterance = utterances().at(-1)!;
+        if (action === 'next tap') { tap(); advance(); }
+        else if (action === 'navigation') key('ArrowRight');
+        else if (action === 'speed') { tap(); advance(100); tap(); }
+        else if (action === 'boundary') key('ArrowLeft');
+        else act(() => root.render(null));
+        const spoken = [...said()];
+        complete(oldUtterance, 'onend');
+        complete(oldUtterance, 'onerror');
+        expect(said()).toEqual(spoken);
+        if (action === 'next tap') {
+          expect(said().at(-1)).toBe('soup');
+          finishWord('soup');
+          expect(said().slice(-4)).toEqual(['s', 'o', 'u', 'p']);
+        }
+      },
+    );
+
+    it('stops the sequence on speech error and advances on the next tap', () => {
+      renderFresh({ ...menu, sections: [{ name: 'Hot soup', items: [] }] });
+      click(); advance();
+      if (stage === 'letter') complete(utterances().at(-1)!);
+      const failed = utterances().at(-1)!;
+      complete(failed, 'onerror');
+      const spoken = [...said()];
+      complete(failed);
+      expect(said()).toEqual(spoken);
+      click(); advance();
+      expect(said().at(-1)).toBe('soup');
+    });
+  });
+
+  it('ignores duplicate end callbacks without skipping letters', () => {
+    click(); advance();
+    const word = utterances().at(-1)!;
+    complete(word);
+    const letter = utterances().at(-1)!;
+    complete(word);
+    expect(said()).toEqual(['Starters', 'S']);
+    complete(letter);
+    expect(said()).toEqual(['Starters', 'S', 't']);
+  });
+
+  it('recovers on the next word if submitting a spelling letter throws', () => {
+    renderFresh({ ...menu, sections: [{ name: 'Hot soup', items: [] }] });
+    click(); advance();
+    speech.speak.mockImplementationOnce(() => { throw new Error('Unavailable'); });
+    expect(() => complete(utterances().at(-1)!)).not.toThrow();
+    const failedLetter = utterances().at(-1)!;
+    complete(failedLetter);
+    expect(said()).toEqual(['Hot', 'H']);
+    click(); advance();
+    expect(said()).toEqual(['Hot', 'H', 'soup']);
+  });
+
+  it('only thumps for whitespace-only text', () => {
+    renderFresh({ ...menu, sections: [{ name: ' \t\n ', items: [] }] });
+    click(); advance(); click(); advance();
+    expect(said()).toEqual([]);
+    expect(audio.play).toHaveBeenCalledTimes(2);
   });
 
   it('only thumps when spelling an empty heading', () => {
@@ -494,19 +573,20 @@ describe('Quick Nav input and spoken text', () => {
     expect(text()).toBe('');
   });
 
-  it('keeps the spelling cursor across double-tap speed announcements', () => {
+  it('keeps the word cursor across double-tap speed announcements', () => {
+    renderFresh({ ...menu, sections: [{ name: 'First section', items: [] }] });
     tap(); advance();
     tap(); advance(100); tap();
-    expect(said()).toEqual(['S', 'Speed 1.5']);
+    expect(said()).toEqual(['First', 'Speed 1.5']);
     tap(); advance();
-    expect(said()).toEqual(['S', 'Speed 1.5', 't']);
+    expect(said()).toEqual(['First', 'Speed 1.5', 'section']);
   });
 
   it('can spell after optional speech submission fails', () => {
     speech.speak.mockImplementationOnce(() => { throw new Error('Unavailable'); });
     key('ArrowRight');
     tap(); advance();
-    expect(said()).toEqual(['Soup', 'S']);
+    expect(said()).toEqual(['Soup', 'Soup']);
   });
 
   it('double-click changes speed without an intervening repeat or display change', () => {
@@ -519,9 +599,9 @@ describe('Quick Nav input and spoken text', () => {
     doubleClick();
     expect(onSpeechRateChange).toHaveBeenLastCalledWith(2);
     click(); advance();
-    expect(said().at(-1)).toBe('Speed 2');
-    click(); advance();
-    expect(said().at(-1)).toBe('S');
+    expect(said().at(-1)).toBe('Soup');
+    finishWord('Soup');
+    expect(said().slice(-4)).toEqual(['S', 'o', 'u', 'p']);
     expect(speech.speak.mock.calls.at(-1)![0].rate).toBe(2);
     expect(text()).toBe('Soup');
   });
@@ -607,9 +687,9 @@ describe('Quick Nav input and spoken text', () => {
 
   it('preserves touch tap timing and ignores its compatibility click', () => {
     tap(); click(); advance(350);
-    expect(said()).toEqual(['S']);
+    expect(said()).toEqual(['Starters']);
     advance();
-    expect(said()).toEqual(['S']);
+    expect(said()).toEqual(['Starters']);
     expect(text()).toBe('Starters');
   });
 
@@ -630,7 +710,7 @@ describe('Quick Nav input and spoken text', () => {
     Object.defineProperty(event, 'pointerType', { value: 'mouse' });
     act(() => area().dispatchEvent(event));
     doubleClick();
-    expect(said()).toEqual(['S', 'Speed 1.75']);
+    expect(said()).toEqual(['Starters', 'Speed 1.75']);
   });
 
   it('cancels touch input for multiple fingers and touch cancellation', () => {

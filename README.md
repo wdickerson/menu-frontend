@@ -1,4 +1,4 @@
-# Menu Reader frontend v2.1.6
+# Menu Reader frontend v2.1.7
 
 ## Overview
 
