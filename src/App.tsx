@@ -17,8 +17,6 @@ import { addRecentMenu, deleteRecentMenu, getMenuChoices, getSelectedMenu, loadM
   renameRecentMenu, saveMenuLibrary, setSharedMenuId,
   type MenuLibrary } from './menuLibrary';
 
-type MenuSection = RestaurantMenu['sections'][number];
-type MenuItem = MenuSection['items'][number];
 type NavigationTarget = 'section' | 'item';
 type BoundarySlots = Record<NavigationTarget, -1 | 1 | null>;
 type ReadSlots = Record<NavigationTarget, boolean>;
@@ -46,6 +44,10 @@ const TAP_MAX_DURATION = 350;
 const DOUBLE_TAP_WINDOW = 200;
 const DOUBLE_TAP_MAX_DISTANCE = 40;
 const MOUSE_CLICK_WINDOW = 300;
+const KEY_DIRECTIONS = {
+  ArrowDown: ['section', 1], ArrowUp: ['section', -1],
+  ArrowRight: ['item', 1], ArrowLeft: ['item', -1],
+} as const;
 const QUICK_NAV_INSTRUCTIONS = `This is the Quick Nav page.
 Turn off screen readers to enable quick nav gestures.
 Flick up/down to navigate menu sections.
@@ -86,33 +88,15 @@ function getNextIndex(currentIndex: number, direction: -1 | 1, itemCount: number
   return nextIndex;
 }
 
-function getSpeechText(item: MenuItem) {
-  return item;
-}
-
-function getTouchCenter(touches: TouchEvent<HTMLElement>['touches']) {
-  let x = 0;
-  let y = 0;
-
-  for (let index = 0; index < touches.length; index += 1) {
-    x += touches[index].clientX;
-    y += touches[index].clientY;
-  }
-
-  return {
-    x: x / touches.length,
-    y: y / touches.length,
-  };
-}
-
 type QuickNavProps = {
   menu: RestaurantMenu;
   speechRate: SpeechRate;
   onSpeechRateChange: (rate: SpeechRate) => void;
   onExit: () => void;
+  onTakeSpeechOwnership?: () => void;
 };
 
-export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: QuickNavProps) {
+export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit, onTakeSpeechOwnership }: QuickNavProps) {
   const [displayText, setDisplayText] = useState(QUICK_NAV_INSTRUCTIONS);
   const gestureAreaRef = useRef<HTMLDivElement | null>(null);
   const mouseTimerRef = useRef<number | null>(null);
@@ -125,8 +109,7 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
   const itemIndexRef = useRef(0);
   const lastUtteranceRef = useRef(menu.sections[0].name);
   const lastUtteranceTargetRef = useRef<NavigationTarget>('section');
-  const wordsRef = useRef(menu.sections[0].name.match(/\S+/gu) ?? []);
-  const wordIndexRef = useRef(0);
+  const wordsRef = useRef<ReturnType<string['matchAll']> | null>(null);
   const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const touchWarmupUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const hasSpokenRef = useRef(false);
@@ -158,6 +141,7 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
   }, []);
 
   function stopSpeech() {
+    onTakeSpeechOwnership?.();
     activeUtteranceRef.current = null;
     touchWarmupUtteranceRef.current = null;
     window.speechSynthesis?.cancel();
@@ -169,6 +153,7 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
     if (activeUtteranceRef.current || touchWarmupUtteranceRef.current
       || synthesis.speaking || synthesis.pending) return;
 
+    onTakeSpeechOwnership?.();
     // Overlap native speech startup with the gesture, without
     // treating silent speech as menu speech.
     const utterance = new SpeechSynthesisUtterance('ready');
@@ -185,28 +170,31 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
     try { synthesis.speak(utterance); } catch { finish(); /* Warm-up is optional. */ }
   }
 
-  function speakQuickNav(text: string, rate: SpeechRate, spelling: string[] = []) {
+  function speakQuickNav(text: string, rate: SpeechRate, spell = false) {
     boundaryThumpRef.current?.cancel();
     const synthesis = window.speechSynthesis;
     if (!synthesis || typeof SpeechSynthesisUtterance === 'undefined') return;
     hasSpokenRef.current = true;
     stopSpeech();
-    const parts = [text, ...spelling];
-    function speakPart(index: number) {
-      const utterance = new SpeechSynthesisUtterance(parts[index]);
+    const characters = spell ? text[Symbol.iterator]() : null;
+    function speakPart(part: string) {
+      const utterance = new SpeechSynthesisUtterance(part);
       utterance.rate = rate;
       activeUtteranceRef.current = utterance;
       const finish = (continueSpelling: boolean) => {
         // Canceled, superseded, or already completed speech must not resume spelling.
         if (activeUtteranceRef.current !== utterance) return;
         activeUtteranceRef.current = null;
-        if (continueSpelling && index + 1 < parts.length) speakPart(index + 1);
+        if (continueSpelling) {
+          const character = characters?.next();
+          if (character && !character.done) speakPart(quickNavCharacterSpeech(character.value));
+        }
       };
       utterance.onend = () => finish(true);
       utterance.onerror = () => finish(false);
       try { synthesis.speak(utterance); } catch { finish(false); /* Speech is optional. */ }
     }
-    speakPart(0);
+    speakPart(text);
   }
 
   function playBoundaryThump() {
@@ -224,8 +212,7 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
     setDisplayText(text);
     lastUtteranceRef.current = text;
     lastUtteranceTargetRef.current = target;
-    wordsRef.current = text.match(/\S+/gu) ?? [];
-    wordIndexRef.current = 0;
+    wordsRef.current = null;
     readSlotsRef.current[target] = true;
     speakQuickNav(text, speechRateRef.current);
   }
@@ -263,8 +250,7 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
 
     itemIndexRef.current = nextItemIndex;
     boundarySlotsRef.current.item = null;
-    readSlotsRef.current.item = true;
-    speakMenuText(getSpeechText(currentSection.items[nextItemIndex]), 'item');
+    speakMenuText(currentSection.items[nextItemIndex], 'item');
     return true;
   }
 
@@ -272,13 +258,14 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
     const target = lastUtteranceTargetRef.current;
     readSlotsRef.current[target] = true;
     setDisplayText(lastUtteranceRef.current);
-    const word = wordsRef.current[wordIndexRef.current];
+    // Consume only the next word; an exhausted iterator stays exhausted.
+    wordsRef.current ??= lastUtteranceRef.current.matchAll(/\S+/gu);
+    const word = wordsRef.current.next().value?.[0];
     if (word === undefined) {
       playBoundaryThump();
       return;
     }
-    wordIndexRef.current += 1;
-    speakQuickNav(word, speechRateRef.current, Array.from(word, quickNavCharacterSpeech));
+    speakQuickNav(word, speechRateRef.current, true);
   }
 
   function readCurrentGestureTarget(target: NavigationTarget) {
@@ -288,7 +275,7 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
     }
 
     const currentSection = menu.sections[sectionIndexRef.current];
-    speakMenuText(getSpeechText(currentSection.items[itemIndexRef.current]), 'item');
+    speakMenuText(currentSection.items[itemIndexRef.current], 'item');
   }
 
   function clearPendingTap() {
@@ -350,11 +337,7 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
 
   function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-    const directions = {
-      ArrowDown: ['section', 1], ArrowUp: ['section', -1],
-      ArrowRight: ['item', 1], ArrowLeft: ['item', -1],
-    } as const;
-    const direction = directions[event.key as keyof typeof directions];
+    const direction = KEY_DIRECTIONS[event.key as keyof typeof KEY_DIRECTIONS];
     if (!direction) return;
     event.preventDefault();
     endSpeedAdjustment();
@@ -439,12 +422,12 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
       return;
     }
 
-    const point = getTouchCenter(event.touches);
+    const { clientX: x, clientY: y } = event.touches[0];
     const startedAt = performance.now();
     const pendingTap = pendingTapRef.current;
 
     if (pendingTap) {
-      const distance = Math.hypot(point.x - pendingTap.x, point.y - pendingTap.y);
+      const distance = Math.hypot(x - pendingTap.x, y - pendingTap.y);
 
       if (startedAt - pendingTap.endedAt <= DOUBLE_TAP_WINDOW && distance <= DOUBLE_TAP_MAX_DISTANCE) {
         // Let an eligible second tap finish before firing the single-tap action.
@@ -456,10 +439,10 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
 
     gestureRef.current = {
       startedAt,
-      startX: point.x,
-      startY: point.y,
-      currentX: point.x,
-      currentY: point.y,
+      startX: x,
+      startY: y,
+      currentX: x,
+      currentY: y,
       isTap: true,
     };
     warmSpeechOnTouchStart();
@@ -478,11 +461,13 @@ export function QuickNav({ menu, speechRate, onSpeechRateChange, onExit }: Quick
       return;
     }
 
-    const point = getTouchCenter(event.touches);
-    gesture.currentX = point.x;
-    gesture.currentY = point.y;
+    const { clientX: x, clientY: y } = event.touches[0];
+    gesture.currentX = x;
+    gesture.currentY = y;
 
-    if (Math.abs(point.x - gesture.startX) > TAP_MAX_MOVE || Math.abs(point.y - gesture.startY) > TAP_MAX_MOVE) {
+    // Disqualify once, unless another input has queued new work during the drag.
+    if ((gesture.isTap || pendingTapRef.current || mouseTimerRef.current !== null || adjustingSpeedRef.current)
+      && (Math.abs(x - gesture.startX) > TAP_MAX_MOVE || Math.abs(y - gesture.startY) > TAP_MAX_MOVE)) {
       gesture.isTap = false;
       endSpeedAdjustment();
     }
@@ -799,6 +784,7 @@ function App() {
   const navigationRef = useRef<ReturnType<typeof createAppNavigation> | null>(null);
   const [focusTarget, setFocusTarget] = useState<MenuPageProps['focusTarget']>(null);
   const [speechRate, setSpeechRate] = useState<SpeechRate>(getSavedSpeechRate);
+  const speechWarmupRef = useRef<(() => void) | null>(null);
   const [storageWarning, setStorageWarning] = useState('');
   const [processingState, setProcessingState] = useState<MenuProcessingState>({ status: 'idle' });
   const [processingSession] = useState(() => createMenuProcessingSession(setProcessingState, (menu) => {
@@ -822,7 +808,17 @@ function App() {
     return next;
   }
 
-  useEffect(() => installSpeechWarmup(document, window.speechSynthesis), []);
+  function retireSpeechWarmup() {
+    const cleanup = speechWarmupRef.current;
+    speechWarmupRef.current = null;
+    cleanup?.();
+  }
+
+  useEffect(() => {
+    const cleanup = installSpeechWarmup(document, window.speechSynthesis);
+    speechWarmupRef.current = cleanup;
+    return () => { cleanup(); speechWarmupRef.current = null; };
+  }, []);
 
   useEffect(() => {
     const navigation = createAppNavigation(window, (nextRoute) => {
@@ -932,6 +928,7 @@ function App() {
         menu={selectedMenu}
         speechRate={speechRate}
         onSpeechRateChange={setSpeechRate}
+        onTakeSpeechOwnership={retireSpeechWarmup}
         onExit={() => navigationRef.current?.home()}
       />
     );

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, Profiler } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QuickNav } from './App';
+import * as characters from './quickNavCharacters';
 import type { RestaurantMenu } from './data/menus';
 
 const audio = vi.hoisted(() => ({ play: vi.fn(), cancel: vi.fn(), dispose: vi.fn() }));
@@ -726,6 +727,349 @@ describe('Quick Nav input and spoken text', () => {
     key('ArrowRight');
     expect(text()).toBe(longText);
     expect(said()).toEqual([longText]);
+  });
+
+  describe('lazy word preparation', () => {
+    function trackWordIteration() {
+      const matchAll = String.prototype.matchAll;
+      const probes: Array<{ text: string; advances: () => number }> = [];
+      vi.spyOn(String.prototype, 'matchAll').mockImplementation(function (this: string, pattern: RegExp) {
+        const iterator = matchAll.call(this, pattern);
+        if (pattern instanceof RegExp && pattern.source === '\\S+' && pattern.flags === 'gu') {
+          const next = vi.spyOn(iterator, 'next');
+          probes.push({ text: String(this), advances: () => next.mock.calls.length });
+        }
+        return iterator;
+      });
+      return {
+        sources: () => probes.map((probe) => probe.text),
+        advances: () => probes.map((probe) => probe.advances()),
+      };
+    }
+
+    afterEach(() => vi.restoreAllMocks());
+
+    it('does not parse text on entry, rerenders, or navigation, and only caches the current source', () => {
+      const words = trackWordIteration();
+      renderFresh(menu);
+      render();
+      key('ArrowDown'); key('ArrowRight'); key('ArrowRight');
+      expect(words.sources()).toEqual([]);
+      tap(); advance(199);
+      expect(words.sources()).toEqual([]);
+      advance(1);
+      expect(said().at(-1)).toBe('Salad');
+      expect(words.sources()).toEqual(['Salad']);
+      expect(words.advances()).toEqual([1]);
+      render();
+      tap(); advance(); // Exhaustion thumps without reparsing or wrapping.
+      expect(audio.play).toHaveBeenCalledOnce();
+      expect(words.sources()).toEqual(['Salad']);
+      expect(words.advances()).toEqual([2]);
+      key('ArrowLeft');
+      expect(words.sources()).toEqual(['Salad']);
+      tap(); advance();
+      expect(said().at(-1)).toBe('Soup');
+      expect(words.sources()).toEqual(['Salad', 'Soup']);
+      expect(words.advances()).toEqual([2, 1]);
+    });
+
+    it('keeps prepared words and the cursor across rerenders and speed announcements', () => {
+      const value = { ...menu, sections: [{ name: 'First section', items: [] }] };
+      const words = trackWordIteration();
+      renderFresh(value);
+      click(); advance();
+      expect(said()).toEqual(['First']);
+      render(value);
+      doubleClick();
+      render(value);
+      click(); advance();
+      expect(said()).toEqual(['First', 'Speed 1.75', 'section']);
+      expect(utterances().at(-1)!.rate).toBe(1.75);
+      expect(words.sources()).toEqual(['First section']);
+      expect(words.advances()).toEqual([2]);
+      key('ArrowUp'); // Thump preserves the exhausted cursor/cache.
+      click(); advance();
+      expect(words.sources()).toEqual(['First section']);
+      expect(words.advances()).toEqual([3]);
+      key('ArrowDown'); // Reannouncing a section resets it without eager parsing.
+      expect(words.sources()).toEqual(['First section']);
+      click(); advance();
+      expect(said().at(-1)).toBe('First');
+      expect(words.sources()).toEqual(['First section', 'First section']);
+      expect(words.advances()).toEqual([3, 1]);
+    });
+
+    it.each(['', ' \t\n '])('keeps exhausted iterators without rescanning: %j', (heading) => {
+      const words = trackWordIteration();
+      const exec = vi.spyOn(RegExp.prototype, 'exec');
+      const scans = () => exec.mock.contexts.filter((pattern) => pattern instanceof RegExp
+        && pattern.source === '\\S+' && pattern.flags === 'gu').length;
+      renderFresh({ ...menu, sections: [{ name: heading, items: [] }] });
+      expect(words.sources()).toEqual([]);
+      click(); advance();
+      expect(scans()).toBe(1);
+      click(); advance();
+      expect(scans()).toBe(1);
+      expect(words.sources()).toEqual([heading]);
+      expect(words.advances()).toEqual([2]);
+      expect(said()).toEqual([]);
+      expect(audio.play).toHaveBeenCalledTimes(2);
+    });
+
+    it('consumes only one word per recognized request from a long item', () => {
+      const longText = 'Long item '.repeat(10000);
+      const words = trackWordIteration();
+      const exec = vi.spyOn(RegExp.prototype, 'exec');
+      const scans = () => exec.mock.contexts.filter((pattern) => pattern instanceof RegExp
+        && pattern.source === '\\S+' && pattern.flags === 'gu').length;
+      renderFresh({ ...menu, sections: [{ name: 'Heading', items: [longText] }] });
+      key('ArrowRight');
+      expect(text()).toBe(longText);
+      expect(words.sources()).toHaveLength(0);
+      tap(); advance();
+      expect(scans()).toBe(1);
+      expect(words.advances()).toEqual([1]);
+      tap(); advance();
+      expect(scans()).toBe(2);
+      expect(words.advances()).toEqual([2]);
+      expect(said()).toEqual([longText, 'Long', 'item']);
+      expect(words.sources()).toHaveLength(1);
+      expect(words.sources()[0]).toBe(longText);
+      expect(text()).toBe(longText);
+    });
+
+    it('does not rescan trailing Unicode whitespace after the final word', () => {
+      const words = trackWordIteration();
+      const exec = vi.spyOn(RegExp.prototype, 'exec');
+      const scans = () => exec.mock.contexts.filter((pattern) => pattern instanceof RegExp
+        && pattern.source === '\\S+' && pattern.flags === 'gu').length;
+      renderFresh({ ...menu, sections: [{ name: 'Last \u2003\n ', items: [] }] });
+      click(); advance();
+      expect(scans()).toBe(1);
+      click(); advance();
+      expect(scans()).toBe(2);
+      click(); advance(); click(); advance();
+      expect(scans()).toBe(2);
+      expect(words.advances()).toEqual([4]);
+      expect(said()).toEqual(['Last']);
+      expect(audio.play).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  describe('incremental spelling', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('prepares no spelling before the word ends and maps only one character per owned completion', () => {
+      const names = vi.spyOn(characters, 'quickNavCharacterSpeech');
+      renderFresh({ ...menu, sections: [{ name: 'Soup!', items: [] }] });
+      click(); advance();
+      expect(names).not.toHaveBeenCalled();
+      const word = utterances().at(-1)!;
+      const staleEnd = word.onend!;
+      complete(word);
+      expect(names).toHaveBeenCalledExactlyOnceWith('S');
+      const firstLetter = utterances().at(-1)!;
+      staleEnd.call(word, new Event('end') as SpeechSynthesisEvent);
+      expect(names).toHaveBeenCalledOnce();
+      complete(firstLetter);
+      expect(names.mock.calls.map(([character]) => character)).toEqual(['S', 'o']);
+      complete(firstLetter);
+      expect(names.mock.calls.map(([character]) => character)).toEqual(['S', 'o']);
+      expect(said()).toEqual(['Soup!', 'S', 'o']);
+      expect(utterances().every((utterance) => utterance.rate === 1.5)).toBe(true);
+    });
+
+    it('does not eagerly map a very long unbroken word', () => {
+      const names = vi.spyOn(characters, 'quickNavCharacterSpeech');
+      const word = 'x'.repeat(100000);
+      renderFresh({ ...menu, sections: [{ name: 'Long', items: [word] }] });
+      key('ArrowRight');
+      tap(); advance();
+      expect(names.mock.calls.length).toBe(0);
+      expect(said().at(-1)).toBe(word);
+      complete(utterances().at(-1)!);
+      expect(names).toHaveBeenCalledExactlyOnceWith('x');
+      expect(said().at(-1)).toBe('x');
+    });
+
+    it('does not consume spelling after errors, interruption, or stale completion callbacks', () => {
+      const names = vi.spyOn(characters, 'quickNavCharacterSpeech');
+      renderFresh({ ...menu, sections: [{ name: 'Hot soup', items: [] }] });
+      click(); advance();
+      const failed = utterances().at(-1)!;
+      const staleEnd = failed.onend!;
+      complete(failed, 'onerror');
+      staleEnd.call(failed, new Event('end') as SpeechSynthesisEvent);
+      expect(names).not.toHaveBeenCalled();
+      click(); advance();
+      expect(said()).toEqual(['Hot', 'soup']);
+      const current = utterances().at(-1)!;
+      const canceledEnd = current.onend!;
+      key('ArrowUp');
+      canceledEnd.call(current, new Event('end') as SpeechSynthesisEvent);
+      expect(names).not.toHaveBeenCalled();
+    });
+
+    it('advances to the next word if submitting the current word throws', () => {
+      const names = vi.spyOn(characters, 'quickNavCharacterSpeech');
+      renderFresh({ ...menu, sections: [{ name: 'Hot soup', items: [] }] });
+      speech.speak.mockImplementationOnce(() => { throw new Error('Unavailable'); });
+      click(); advance();
+      expect(said()).toEqual(['Hot']);
+      expect(names).not.toHaveBeenCalled();
+      click(); advance();
+      expect(said()).toEqual(['Hot', 'soup']);
+      expect(names).not.toHaveBeenCalled();
+      complete(utterances().at(-1)!);
+      expect(names).toHaveBeenCalledExactlyOnceWith('s');
+    });
+
+    it('preserves word progression while speech APIs are unavailable without preparing letters', () => {
+      const names = vi.spyOn(characters, 'quickNavCharacterSpeech');
+      renderFresh({ ...menu, sections: [{ name: 'Hot soup', items: [] }] });
+      vi.stubGlobal('speechSynthesis', undefined);
+      click(); advance();
+      expect(speech.speak).not.toHaveBeenCalled();
+      expect(names).not.toHaveBeenCalled();
+      vi.stubGlobal('speechSynthesis', speech);
+      click(); advance();
+      expect(said()).toEqual(['soup']);
+      expect(names).not.toHaveBeenCalled();
+    });
+
+    it('preserves combining marks, ZWJ sequences, and lone surrogates as Unicode code points', () => {
+      const value = 'e\u0301 👩\u200d🍳 \ud800';
+      renderFresh({ ...menu, sections: [{ name: 'Unicode', items: [value] }] });
+      key('ArrowRight');
+      for (const word of ['e\u0301', '👩\u200d🍳', '\ud800']) {
+        tap(); advance(); finishWord(word);
+      }
+      expect(said()).toEqual([value, 'e\u0301', 'e', '\u0301', '👩\u200d🍳', '👩', '\u200d', '🍳', '\ud800', '\ud800']);
+      tap(); advance();
+      expect(audio.play).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('touch movement regressions', () => {
+    it('does not commit React renders or navigate during a dense stream of movement', () => {
+      const commits = vi.fn();
+      act(() => root.render(null));
+      act(() => root.render(<Profiler id="quick-nav" onRender={commits}>
+        <QuickNav menu={menu} speechRate={1.5} onSpeechRateChange={onSpeechRateChange} onExit={onExit} />
+      </Profiler>));
+      commits.mockClear();
+      touch('touchstart', 100, 100);
+      for (let delta = 1; delta <= 100; delta += 1) touch('touchmove', 100 + delta, 100);
+      expect(commits).not.toHaveBeenCalled();
+      expect(said()).toEqual([]);
+      expect(audio.play).not.toHaveBeenCalled();
+      touch('touchend', 200, 100);
+      expect(said()).toEqual(['Soup']);
+      expect(commits).toHaveBeenCalledOnce();
+    });
+
+    it('does not turn an out-and-back movement into a tap', () => {
+      touch('touchstart', 100, 100);
+      for (const x of [120, 140, 130, 110, 100]) touch('touchmove', x, 100);
+      touch('touchend', 100, 100);
+      advance();
+      expect(said()).toEqual([]);
+      expect(audio.play).not.toHaveBeenCalled();
+      tap(); advance();
+      expect(said()).toEqual(['Starters']);
+    });
+
+    it('uses the last movement coordinates if touchend has no changed touches', () => {
+      touch('touchstart', 100, 100);
+      touch('touchmove', 180, 100);
+      touch('touchend', 0, 0, 0);
+      expect(said()).toEqual(['Soup']);
+    });
+
+    it('uses final touchend coordinates even if there was no movement event', () => {
+      touch('touchstart', 100, 100);
+      touch('touchend', 180, 100);
+      expect(said()).toEqual(['Soup']);
+    });
+
+    it('invalidates a gesture when a second finger arrives during movement', () => {
+      touch('touchstart', 100, 100);
+      touch('touchmove', 130, 100);
+      touch('touchmove', 180, 100, 2);
+      touch('touchmove', 200, 100);
+      touch('touchend', 200, 100);
+      advance();
+      expect(said()).toEqual([]);
+      expect(audio.play).not.toHaveBeenCalled();
+      flick(80, 0);
+      expect(said()).toEqual(['Soup']);
+    });
+
+    it.each([
+      { x: 54, y: 0, spoken: [] }, { x: 55, y: 0, spoken: ['Soup'] },
+      { x: 0, y: 54, spoken: [] }, { x: 0, y: 55, spoken: ['Starters'] },
+      { x: 60, y: 50, spoken: [] }, { x: 61, y: 50, spoken: ['Soup'] },
+      { x: 50, y: 60, spoken: [] }, { x: 50, y: 61, spoken: ['Starters'] },
+      { x: 80, y: 80, spoken: [] },
+    ])('preserves flick distance and direction thresholds: $x,$y', ({ x, y, spoken }) => {
+      flick(x, y); advance();
+      expect(said()).toEqual(spoken);
+      expect(audio.play).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { x: 18, y: 0, duration: 350, accepted: true },
+      { x: 0, y: 18, duration: 350, accepted: true },
+      { x: 19, y: 0, duration: 350, accepted: false },
+      { x: 0, y: 19, duration: 350, accepted: false },
+      { x: 0, y: 0, duration: 351, accepted: false },
+    ])('preserves tap movement/duration limits: $x,$y,$duration', ({ x, y, duration, accepted }) => {
+      touch('touchstart', 100, 100);
+      touch('touchmove', 100 + x, 100 + y);
+      advance(duration);
+      touch('touchend', 100 + x, 100 + y);
+      advance(200);
+      expect(said()).toEqual(accepted ? ['Starters'] : []);
+      expect(audio.play).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { distance: 40, spoken: ['Speed 1.5'] },
+      { distance: 41, spoken: ['Starters'] },
+    ])('preserves double-tap distance eligibility at $distance pixels', ({ distance, spoken }) => {
+      tap(); advance(100);
+      touch('touchstart', 100 + distance, 100);
+      touch('touchend', 100 + distance, 100);
+      advance();
+      expect(said()).toEqual(spoken);
+    });
+
+    it('lets an eligible second tap finish after the first tap deadline without reading a word', () => {
+      tap(); advance(150);
+      touch('touchstart', 100, 100);
+      advance(150);
+      expect(said()).toEqual([]);
+      touch('touchend', 100, 100);
+      expect(said()).toEqual(['Speed 1.5']);
+      advance();
+      expect(said()).toEqual(['Speed 1.5']);
+    });
+
+    it('still cancels newly queued mouse input during an already disqualified touch gesture', () => {
+      touch('touchstart', 100, 100);
+      touch('touchmove', 130, 100);
+      const mouse = new Event('pointerdown', { bubbles: true });
+      Object.defineProperty(mouse, 'pointerType', { value: 'mouse' });
+      act(() => area().dispatchEvent(mouse));
+      click();
+      touch('touchmove', 140, 100);
+      advance(300);
+      expect(said()).toEqual([]);
+      touch('touchend', 140, 100);
+      advance();
+      expect(said()).toEqual([]);
+    });
   });
 
   it('does not repeat speech from the Exit button', () => {

@@ -140,3 +140,11 @@ Modify the single-tap gesture function.
 With each single tap:
 -Progress through the current item one word at a time
 -Speak the word, and then speak the spelling of the word one letter at a time
+
+# Menu Reader frontend requirements — v2.1.8
+
+Simplify logic around end-of-list thump on the quick nav page. Use two a separate audio file for the thump on iOS, but that is the only device-specific condition allowed.
+
+Performance improvements on the quick nav page, without changing any UX behavior.
+
+

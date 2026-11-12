@@ -1,79 +1,95 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-describe('bundled thump recording', () => {
-  it('provides a louder, non-clipping iOS variant with the same duration and sweep', () => {
-    const standard = readFileSync(new URL('../public/assets/boundary-thump.wav', import.meta.url));
-    const ios = readFileSync(new URL('../public/assets/boundary-thump-ios.wav', import.meta.url));
-    expect(ios.subarray(0, 44)).toEqual(standard.subarray(0, 44));
-    expect(ios.length).toBe(standard.length);
-    let standardEnergy = 0;
-    let iosEnergy = 0;
-    let peak = 0;
-    for (let offset = 44; offset < standard.length; offset += 2) {
-      const original = standard.readInt16LE(offset);
-      const louder = ios.readInt16LE(offset);
-      expect(Math.abs(louder)).toBeGreaterThanOrEqual(Math.abs(original));
-      if (original !== 0) expect(Math.sign(louder)).toBe(Math.sign(original));
-      standardEnergy += original ** 2;
-      iosEnergy += louder ** 2;
-      peak = Math.max(peak, Math.abs(louder) / 32767);
-    }
-    expect(Math.sqrt(iosEnergy / standardEnergy)).toBeGreaterThan(1.5);
-    expect(peak).toBeGreaterThan(0.95);
-    expect(peak).toBeLessThanOrEqual(0.981);
-    expect(ios.readInt16LE(44)).toBe(0);
-    expect(ios.readInt16LE(ios.length - 2)).toBe(0);
+describe('standard bundled thump recording', () => {
+  const wav = readFileSync(new URL('../public/assets/boundary-thump.wav', import.meta.url));
+
+  it('preserves the existing Android and desktop recording', () => {
+    expect(createHash('sha256').update(wav.subarray(44)).digest('hex'))
+      .toBe('f574ae5f9b9a6cefb1a6fe913f9ab11220b931a77215d172f294f233748819ad');
   });
 
-  it('has 1.5x the original waveform amplitude within PCM rounding tolerance', () => {
-    const wav = readFileSync(new URL('../public/assets/boundary-thump.wav', import.meta.url));
-    let phase = 0;
-    let maxRoundingDifference = 0;
-    for (let sample = 0; sample < 9600; sample += 1) {
-      const time = sample / 48000;
-      const frequency = 280 * (220 / 280) ** Math.min(time / 0.16, 1);
-      const gain = time < 0.012
-        ? 0.0001 * (0.6 / 0.0001) ** (time / 0.012)
-        : time < 0.18
-          ? 0.6 * (0.0001 / 0.6) ** ((time - 0.012) / 0.168)
-          : 0.0001 * (0.2 - time) / 0.02;
-      const original = Math.round(Math.sin(phase) * gain * 32767);
-      maxRoundingDifference = Math.max(maxRoundingDifference,
-        Math.abs(wav.readInt16LE(44 + sample * 2) - original * 1.5));
-      phase += 2 * Math.PI * frequency / 48000;
+  it('has about 50% more RMS amplitude than the previous recording without clipping', () => {
+    // Measured before the boost; soft limiting avoids clipping at 1.5x RMS.
+    const previousRms = 0.1449056277829224;
+    let energy = 0;
+    for (let offset = 44; offset < wav.length; offset += 2) {
+      const sample = wav.readInt16LE(offset);
+      expect(Math.abs(sample)).toBeLessThan(32767);
+      energy += (sample / 32767) ** 2;
     }
-    expect(maxRoundingDifference).toBeLessThanOrEqual(1);
+    const rms = Math.sqrt(energy / ((wav.length - 44) / 2));
+    expect(rms / previousRms).toBeGreaterThan(1.49);
+    expect(rms / previousRms).toBeLessThan(1.51);
   });
 
-  it('is a non-silent 200 ms mono PCM WAV with the tuned sweep and gain envelope', () => {
-    const wav = readFileSync(new URL('../public/assets/boundary-thump.wav', import.meta.url));
+  it('is a non-silent, non-clipping 200 ms mono PCM WAV', () => {
     expect(wav.toString('ascii', 0, 4)).toBe('RIFF');
     expect(wav.toString('ascii', 8, 12)).toBe('WAVE');
-    expect(wav.readUInt16LE(20)).toBe(1); // PCM
-    expect(wav.readUInt16LE(22)).toBe(1); // Mono
-    const sampleRate = wav.readUInt32LE(24);
-    expect(sampleRate).toBe(48000);
+    expect(wav.readUInt16LE(20)).toBe(1);
+    expect(wav.readUInt16LE(22)).toBe(1);
+    expect(wav.readUInt32LE(24)).toBe(48000);
     expect(wav.readUInt16LE(34)).toBe(16);
     expect(wav.toString('ascii', 36, 40)).toBe('data');
     expect(wav.readUInt32LE(40)).toBe(wav.length - 44);
-    const sampleCount = (wav.length - 44) / 2;
-    expect(sampleCount / sampleRate).toBe(0.2);
-    const samples = Array.from({ length: sampleCount }, (_, index) => wav.readInt16LE(44 + index * 2));
+    const samples = Array.from({ length: (wav.length - 44) / 2 }, (_, index) => wav.readInt16LE(44 + index * 2));
+    expect(samples.length / 48000).toBe(0.2);
     const peak = Math.max(...samples.map(Math.abs)) / 32767;
-    expect(peak).toBeGreaterThan(0.825);
-    expect(peak).toBeLessThanOrEqual(0.9);
+    expect(peak).toBeGreaterThan(0.95);
+    expect(peak).toBeLessThanOrEqual(0.98);
     expect(samples[0]).toBe(0);
     expect(samples.at(-1)).toBe(0);
-    // Count rising zero crossings near the head and tail of the sweep.
-    const crossings = samples.flatMap((value, index) =>
-      index > 0 && value > 0 && samples[index - 1] <= 0 ? [index] : []);
-    const frequency = (start, end) =>
-      sampleRate / (crossings[end] - crossings[start]) * (end - start);
-    expect(frequency(0, 3)).toBeGreaterThan(270);
-    expect(frequency(0, 3)).toBeLessThan(280);
-    const last = crossings.length - 1;
-    expect(frequency(last - 3, last)).toBeGreaterThan(215);
-    expect(frequency(last - 3, last)).toBeLessThan(225);
+  });
+});
+
+describe('iOS bundled thump recording', () => {
+  const standard = readFileSync(new URL('../public/assets/boundary-thump.wav', import.meta.url));
+  const ios = readFileSync(new URL('../public/assets/boundary-thump-ios.wav', import.meta.url));
+  const samples = Array.from({ length: (ios.length - 44) / 2 }, (_, index) => ios.readInt16LE(44 + index * 2));
+
+  it('bundles a single damped knock without runtime sound processing', () => {
+    expect(createHash('sha256').update(ios.subarray(44)).digest('hex'))
+      .toBe('1259e34363ad5494c71dcd0e787c14a04d16e61bb4840c22b37ab4b7192f42df');
+  });
+
+  it('is a shorter 140 ms cue in the same mono PCM format', () => {
+    expect(ios.toString('ascii', 0, 4)).toBe('RIFF');
+    expect(ios.readUInt32LE(4)).toBe(ios.length - 8);
+    expect(ios.subarray(8, 40)).toEqual(standard.subarray(8, 40));
+    expect(ios.readUInt32LE(40)).toBe(ios.length - 44);
+    expect(ios.length).toBe(13484);
+    expect(samples.length / ios.readUInt32LE(24)).toBe(0.14);
+  });
+
+  it('retains a strong impact and peak headroom without clipping', () => {
+    const standardSamples = Array.from({ length: (standard.length - 44) / 2 }, (_, index) => standard.readInt16LE(44 + index * 2));
+    const energy = samples.reduce((sum, sample) => sum + sample ** 2, 0);
+    const standardEnergy = standardSamples.reduce((sum, sample) => sum + sample ** 2, 0);
+    const rmsRatio = Math.sqrt((energy / samples.length) / (standardEnergy / standardSamples.length));
+    expect(rmsRatio).toBeGreaterThan(1.4);
+    expect(rmsRatio).toBeLessThan(1.6);
+    const peak = Math.max(...samples.map(Math.abs)) / 32767;
+    expect(peak).toBeGreaterThan(0.96);
+    expect(peak).toBeLessThan(0.98);
+  });
+
+  it('concentrates the energy into a prompt impact rather than a sustained tone', () => {
+    const energy = (values) => values.reduce((sum, sample) => sum + sample ** 2, 0);
+    const total = energy(samples);
+    expect(energy(samples.slice(0, 48000 * 0.08)) / total).toBeGreaterThan(0.95);
+    expect(energy(samples.slice(48000 * 0.11)) / total).toBeLessThan(0.01);
+    const peak = Math.max(...samples.map(Math.abs));
+    const peakIndex = samples.findIndex((sample) => Math.abs(sample) === peak);
+    expect(peakIndex / 48000).toBeLessThan(0.02);
+  });
+
+  it('has softened edges, a quiet tail, and no large DC offset', () => {
+    expect(samples[0]).toBe(0);
+    expect(samples.at(-1)).toBe(0);
+    expect(Math.max(...samples.slice(0, 10).map(Math.abs)) / 32767).toBeLessThan(0.02);
+    expect(Math.max(...samples.slice(-48).map(Math.abs)) / 32767).toBeLessThan(0.001);
+    const mean = samples.reduce((sum, sample) => sum + sample, 0) / samples.length / 32767;
+    expect(Math.abs(mean)).toBeLessThan(0.005);
   });
 });
